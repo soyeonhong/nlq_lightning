@@ -11,9 +11,11 @@ YY: ${now:%Y}
 mm: ${now:%m}  # month
 dd: ${now:%d}  # day
 runtime_outdir: ${runtime_outdir:}
+base_lr: 0.0001
+total_bsz: ${eval:'${dataset.batch_size} * ${oc.env:SLURM_GPUS_ON_NODE,8} * ${oc.env:SLURM_JOB_NUM_NODES,1}'}
 
 dataset:
-  data_dir: '/data/soyeonhong/nlq/GroundVQA/data/unified'
+  data_dir: '/data/soyeonhong/nlq/nlq_lightning/data/unified'
   ann_dir: '/data/datasets/ego4d_data/v2/annotations'
   feature_type: egovlp_internvideo
   feature_dim: 2304
@@ -58,7 +60,7 @@ trainer:
 optim:
   optimizer:
     _target_: torch.optim.AdamW
-    lr: 0.0001
+    lr: ${eval:'${base_lr} / 128 * ${total_bsz}'} # 0.0001 / 128 (official bsz) * (our bsz)
     weight_decay: 0.0
   freeze: [ ]
   lr_scheduler: False

@@ -15,10 +15,9 @@ python run.py \
     'dataset.nlq_train_splits=[NLQ_train]' \
     'dataset.test_splits=[NLQ_val]' \
     dataset.batch_size=32 \
-    +trainer.test_only=True \
-    '+trainer.checkpoint_path="/data/soyeonhong/nlq/GroundVQA/checkpoints/GroundVQA_B-NLQ-VLG-val_R1_03=15.5.ckpt"' \
-    'trainer.load_nlq_head=True' \
-    'model.ignore_decoder=False'
+    trainer.test_only=True \
+    'trainer.checkpoint_path="/data/soyeonhong/nlq/GroundVQA/checkpoints/GroundVQA_B-NLQ-VLG-val_R1_03=15.5.ckpt"' \
+    'trainer.load_nlq_head=True'
 
 # NLQv2 val
 # CUDA_VISIBLE_DEVICES=1 python run.py \

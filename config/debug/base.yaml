@@ -3,6 +3,6 @@
 
 # usage: python train.py +debug=base
 
-debug: true
+total_bsz: 6
 
 

@@ -172,3 +172,6 @@ cython_debug/
 #.idea/
 checkpoints
 data
+LLaVA-NeXT-Video-7B-DPO
+scripts/scp.sh
+llava-v1.6-34b
