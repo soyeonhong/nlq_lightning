@@ -1,0 +1,8 @@
+# @package _global_
+
+
+# usage: python train.py +debug=base
+
+debug: true
+
+

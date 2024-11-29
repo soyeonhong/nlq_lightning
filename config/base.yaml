@@ -1,0 +1,68 @@
+defaults:
+  - model: groundvqa_s
+  - _self_
+  - override hydra/job_logging: none
+  - override hydra/hydra_logging: none
+
+# runtime parameters
+jid: ${oc.env:SLURM_JOB_ID}
+job_type: ${job_type:}  # debug or batch
+YY: ${now:%Y}
+mm: ${now:%m}  # month
+dd: ${now:%d}  # day
+runtime_outdir: ${runtime_outdir:}
+
+dataset:
+  data_dir: '/data/soyeonhong/nlq/GroundVQA/data/unified'
+  ann_dir: '/data/datasets/ego4d_data/v2/annotations'
+  feature_type: egovlp_internvideo
+  feature_dim: 2304
+  max_v_len: 1200
+
+  qa_train_splits: []
+  nlq_train_splits: []
+  test_splits: ['QaEgo4D_test', 'QaEgo4D_test_close', 'NLQ_val']
+  closeqa_weight: 50
+
+  tokenizer_path: google/flan-t5-small
+
+  num_workers: 4
+  batch_size: 16
+
+trainer:
+  detect_anomaly: True
+  max_epochs: 100
+  accumulate_grad_batches: 1
+  auto_resume: False
+  gpus: 1
+  log_every_n_steps: 1
+  auto_lr_find: False
+  enable_progress_bar: True
+  monitor_variable: val_ROUGE
+  monitor_mode: max
+  find_unused_parameters: False
+  precision: bf16
+  val: False  # test on the val set
+  gradient_clip_val: 1.0
+  save_nlq_results: null
+  deterministic: True
+  load_decoder: True
+  load_nlq_head: True
+  ignore_existing_checkpoints: True
+  lr_find_kwargs: {'min_lr': 5e-06, 'max_lr': 0.01}
+  random_seed: 42
+  test_only: False
+  reset_early_stopping_criterion: False
+  checkpoint_path: null
+  
+optim:
+  optimizer:
+    _target_: torch.optim.AdamW
+    lr: 0.0001
+    weight_decay: 0.0
+  freeze: [ ]
+  lr_scheduler: False
+
+hydra:
+  run:
+    dir: ./outputs/${job_type}/${YY}-${mm}-${dd}/${jid}
