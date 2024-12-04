@@ -4,6 +4,8 @@ defaults:
   - override hydra/job_logging: none
   - override hydra/hydra_logging: none
 
+random_seed: 42
+
 # runtime parameters
 jid: ${oc.env:SLURM_JOB_ID}
 job_type: ${job_type:}  # debug or batch
@@ -13,6 +15,11 @@ dd: ${now:%d}  # day
 runtime_outdir: ${runtime_outdir:}
 base_lr: 0.0001
 total_bsz: ${eval:'${dataset.batch_size} * ${oc.env:SLURM_GPUS_ON_NODE,8} * ${oc.env:SLURM_JOB_NUM_NODES,1}'}
+max_steps: ${eval:'${trainer.max_epochs} * ${dataset.num_train_samples} // ${oc.env:SLURM_GPUS_ON_NODE,8} // ${dataset.batch_size}'}
+load_nlq_head: True
+load_decoder: True
+test_only: False
+checkpoint_path: null
 
 dataset:
   data_dir: '/data/soyeonhong/nlq/nlq_lightning/data/unified'
@@ -22,7 +29,7 @@ dataset:
   max_v_len: 1200
 
   qa_train_splits: []
-  nlq_train_splits: []
+  nlq_train_splits: ['NLQ_train']
   test_splits: ['QaEgo4D_test', 'QaEgo4D_test_close', 'NLQ_val']
   closeqa_weight: 50
 
@@ -31,31 +38,29 @@ dataset:
   num_workers: 4
   batch_size: 16
 
+  num_train_samples: 13847
+
 trainer:
+  max_steps: ${max_steps}
   detect_anomaly: True
   max_epochs: 100
   accumulate_grad_batches: 1
-  auto_resume: False
-  gpus: 1
   log_every_n_steps: 1
-  auto_lr_find: False
   enable_progress_bar: True
-  monitor_variable: val_ROUGE
-  monitor_mode: max
-  find_unused_parameters: False
-  precision: bf16
-  val: False  # test on the val set
+  precision: 32
   gradient_clip_val: 1.0
-  save_nlq_results: null
   deterministic: True
-  load_decoder: True
-  load_nlq_head: True
-  ignore_existing_checkpoints: True
-  lr_find_kwargs: {'min_lr': 5e-06, 'max_lr': 0.01}
-  random_seed: 42
-  test_only: False
-  reset_early_stopping_criterion: False
-  checkpoint_path: null
+  logger:
+    - _target_: lightning.pytorch.loggers.WandbLogger
+      project: 'ltvu_NLQ'
+      entity: 'team-khu'
+      group: 'base'  # for grouping runs (does not mean an organization)
+      job_type: ${job_type}  # debug or batch
+      name: sy-${jid}  # displayname
+      tags: []  # for filtering
+      notes: null  # real note, a log string
+      save_dir: ${runtime_outdir}  # logs will be saved under THIS/wandb
+      log_model: False    # as we use custom checkpointing
   
 optim:
   optimizer:

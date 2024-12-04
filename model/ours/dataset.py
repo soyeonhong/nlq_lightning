@@ -6,12 +6,14 @@ import json
 import random
 from pathlib import Path
 from typing import Iterable
+from omegaconf import OmegaConf
 
 import h5py
 import numpy as np
 import torch
 import torch.nn.functional as F
-import pytorch_lightning as pl
+# import pytorch_lightning as pl
+import lightning as L
 from torch.utils.data import Dataset, DataLoader, ConcatDataset
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data.dataset import Dataset
@@ -196,7 +198,7 @@ class JointDataset(ConcatDataset):
         return result
 
 
-class JointDataModule(pl.LightningDataModule):
+class JointDataModule(L.LightningDataModule):
     train_dataset = None
     val_dataset = None
     test_dataset = None
@@ -204,6 +206,9 @@ class JointDataModule(pl.LightningDataModule):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        
+        self.save_hyperparameters(ignore='config')  # to avoid saving unresolved config as a hyperparameter
+        self.save_hyperparameters(OmegaConf.to_container(config, resolve=True), logger=False)  # to save the config in the checkpoint
         
     def setup(self, stage=None):
         CloseQA_weight = self.config.get('closeqa_weight', 50)

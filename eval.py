@@ -16,8 +16,6 @@ from nltk.tokenize import word_tokenize
 from nltk.corpus import wordnet
 import nltk
 
-nltk.download('wordnet')
-
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""

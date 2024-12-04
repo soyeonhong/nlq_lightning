@@ -1,14 +1,7 @@
-import re
-import math
-from argparse import ArgumentParser, Namespace
-
 import hydra
 import torch
-import pytorch_lightning as pl
-from omegaconf import DictConfig, open_dict
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, LearningRateMonitor, StochasticWeightAveraging
-from pytorch_lightning.loggers import TensorBoardLogger
-from pytorch_lightning.plugins import DDPPlugin
+# import pytorch_lightning as pl
+import lightning as L
 import pytorch_lightning.utilities as L_utils
 
 from model.ours.dataset import JointDataModule
@@ -18,6 +11,8 @@ from omegaconf import OmegaConf, DictConfig
 import os
 import subprocess
 from pathlib import Path
+
+from model.ours.trainer import get_trainer
 
 @L_utils.rank_zero_only
 def log_to_console(msg):
@@ -41,24 +36,13 @@ def within_slurm_batch():
     return batch_flag == 1
 
 
-def _adjust_ddp_config(trainer_cfg):
-    trainer_cfg = dict(trainer_cfg)
-    strategy = trainer_cfg.get('strategy', None)
-    if trainer_cfg['gpus'] > 1 and strategy is None:
-        strategy = 'ddp'  # Select ddp by default
-    if strategy == 'ddp':
-        trainer_cfg['strategy'] = DDPPlugin(
-            find_unused_parameters=trainer_cfg['find_unused_parameters'], 
-            gradient_as_bucket_view=True)
-    return trainer_cfg
-
-
 @hydra.main(config_path='config', config_name='base')
 def train(config: DictConfig):
-    pl.seed_everything(config.trainer.random_seed, workers=True)
-    trainer_cfg = Namespace(**_adjust_ddp_config(config.trainer))
+    L.seed_everything(config.random_seed, workers=True)
     default_root_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
     jid = os.environ.get("SLURM_JOB_ID")
+    checkpoint_path = config.checkpoint_path
+    test_only = config.test_only
     
     log_to_console('\n' + "="*80 + '\n')
     log_to_console(OmegaConf.to_yaml(config, resolve=True))
@@ -66,86 +50,50 @@ def train(config: DictConfig):
 
     data = JointDataModule(config.dataset)
     data.setup()
-
-    total_steps = trainer_cfg.max_epochs * math.floor(len(data.train_dataset) / trainer_cfg.gpus / config.dataset.batch_size)
-    model = LightningModule(config, total_steps)
-    if trainer_cfg.checkpoint_path:
-        state_dict = torch.load(trainer_cfg.checkpoint_path, map_location='cpu')['state_dict']
-        if not trainer_cfg.load_nlq_head:
+    model = LightningModule(config)
+    
+    log_to_console(model)
+    
+    if checkpoint_path:
+        state_dict = torch.load(checkpoint_path, map_location='cpu')['state_dict']
+        if not config.load_nlq_head:
             print('Train NLQ head from scratch')
             state_dict = {k: v for k, v in state_dict.items() if not "nlq_head" in k}
-        if not trainer_cfg.load_decoder:
+        if not config.load_decoder:
             print('Train LM decoder head from scratch')
             state_dict = {k: v for k, v in state_dict.items() if not ("decoder" in k or "lm_head" in k)}
         missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-        print(f'Load checkpoint: {trainer_cfg.checkpoint_path}')
+        print(f'Load checkpoint: {checkpoint_path}')
         print(f'Missing Keys: {missing_keys}')
         print(f'Unexpected Keys: {unexpected_keys}')
+        
+    trainer, ckpt_callback = get_trainer(config, jid, enable_progress_bar=not within_slurm_batch())
         
     # write job script
     if within_slurm_batch():
         write_batch_script(jid, default_root_dir)
 
-
-    if trainer_cfg.test_only:  # evaluation
-        trainer = pl.Trainer.from_argparse_args(
-            trainer_cfg, 
-            enable_checkpointing=False, 
-            logger=False
+    if test_only:  # evaluation
+        trainer.predict(
+            model, [data.val_dataloader(), data.train_dataloader()],
         )
-        if trainer_cfg.val:
-            trainer.validate(
-                model, data.val_dataloader(),
-            )
-        else:
-            trainer.test(
-                model, [data.val_dataloader(), data.train_dataloader()],
-            )
-    else:  # training
-        model_checkpoint = []
-        if 'QaEgo4D_test' in config.dataset.test_splits:
-            model_checkpoint.append(
-                ModelCheckpoint(
-                    save_last=False, 
-                    monitor='val_ROUGE', 
-                    mode='max',
-                    save_top_k=1, 
-                    filename='{step}-{' + 'val_ROUGE' + ':.3f}')
-            )
-        if 'QaEgo4D_test_close' in config.dataset.test_splits:
-            model_checkpoint.append(
-                ModelCheckpoint(
-                    save_last=False, 
-                    monitor='val_close_acc', 
-                    mode='max',
-                    save_top_k=1, 
-                    filename='{step}-{' + 'val_close_acc' + ':.3f}')
-            )
-        if 'NLQ_val' in config.dataset.test_splits:
-            model_checkpoint.append(
-                ModelCheckpoint(
-                    dirpath=default_root_dir,
-                    save_last=False, 
-                    monitor='val_R1_03', 
-                    mode='max',
-                    save_top_k=1, 
-                    filename='{epoch}-{' + 'val_R1_03' + ':.3f}')
-            )
-        trainer = pl.Trainer.from_argparse_args(trainer_cfg, 
-        callbacks=[
-            LearningRateMonitor(logging_interval='step'),
-            # StochasticWeightAveraging(swa_lrs=1e-2),
-            *model_checkpoint
-        ],
-        logger=TensorBoardLogger(
-                save_dir=default_root_dir,
-                version=os.environ.get("SLURM_JOB_ID"),
-                name="lit",
-                default_hp_metric=False
-            ))
+    else:  
+        # training
         trainer.fit(
             model, data.train_dataloader(), [data.val_dataloader(), data.train_dataloader()], 
         )
+        
+        # evaluation
+        # p_ckpt = 'outputs/batch/2024-10-13/130884/epoch=105-iou=0.4454.ckpt'
+        # p_ckpt = p_ckpt if config.get('debug') else ckpt_callback.best_model_path
+        # eval_config = hydra.compose(config_name=config.get('eval_config','eval'), overrides=[
+        #     f'ckpt={str(p_ckpt).replace('=', '\\=')}',
+        #     f'batch_size={config.batch_size}',
+        #     f'num_workers={config.num_workers}',
+        #     f'prefetch_factor={config.prefetch_factor}'
+        # ])
+        # model = LightningModule.load_from_checkpoint(p_ckpt)
+        # data = JointDataModule(eval_config)
 
     
 if __name__ == '__main__':
