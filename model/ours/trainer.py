@@ -3,20 +3,13 @@ from pathlib import Path
 from argparse import Namespace
 
 import hydra
-import torch
+import numpy as np
 from omegaconf import OmegaConf, DictConfig, open_dict
-
-# This is old version
-# import pytorch_lightning as pl
-# from pytorch_lightning.plugins import DDPPlugin
-# from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, TQDMProgressBar, BasePredictionWriter, ModelSummary
-# from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger, CSVLogger
-# from eval_nlq import ReferringRecall
 
 import lightning as L
 from lightning.pytorch.strategies import DDPStrategy
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor, TQDMProgressBar, BasePredictionWriter, ModelSummary
-from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger, CSVLogger
+from lightning.pytorch.loggers import WandbLogger, CSVLogger
 from eval_nlq import ReferringRecall
 
 type_loggers = WandbLogger | CSVLogger
@@ -30,7 +23,6 @@ class NLQWriter(BasePredictionWriter):
         super().__init__(write_interval="batch")
         self.p_outdir = Path(output_dir)
         self.p_int_pred = self.p_outdir / 'intermediate_predictions.json'
-        self.p_pred = self.p_outdir / 'predictions.json'
         self.p_metrics = self.p_outdir / 'metrics.json'
         self.p_metrics_log = self.p_outdir / 'metrics.log'
         self.rank_seg_preds = {
@@ -78,14 +70,11 @@ class NLQWriter(BasePredictionWriter):
             sample_ratio = prediction['sample_ratio'][i]
             new_prediction = [
                 [   segment[0] / sample_ratio,
-                    segment[1] / sample_ratio,
-                    score  ] 
-                for segment, score in zip(
-                    prediction['nlq_results'][i]['segments'].cpu().detach().tolist(),
-                    prediction['nlq_results'][i]['scores'].cpu().detach().tolist(),
-            )]
+                    segment[1] / sample_ratio] 
+                for segment in prediction['nlq_results'][i]['segments'].cpu().detach().tolist()]
             
             result = {
+                'question': prediction['question'][i],
                 'query_idx': int(temp_list[1]),
                 'annotation_uid': temp_list[0],
                 'predicted_times': new_prediction,
@@ -94,18 +83,15 @@ class NLQWriter(BasePredictionWriter):
             }
             
             self.rank_seg_preds[split].append(result)
-
-        if batch_idx % 100 == 0:  # checkpointing
-            self.rank_seg_preds[split] = sorted(self.rank_seg_preds[split], key=lambda x: x[:-1])
             
-            with open(self.p_tmp_outdir / f'rank-{trainer.global_rank}-{split}.json', 'w') as f:
-                json.dump(self.rank_seg_preds[split], f)
+        with open(self.p_tmp_outdir / f'rank-{trainer.global_rank}-{split}.json', 'w') as f:
+            json.dump(self.rank_seg_preds[split], f)
 
     def on_predict_epoch_end(self, trainer, pl_module):
 
         for key in ['train', 'val']:
             # Sort the predictions based on elements excluding the last one
-            self.rank_seg_preds[key].sort(key=lambda x: x[:-1])
+            # self.rank_seg_preds[key].sort(key=lambda x: x[:-1])
             
             # Write sorted predictions to a JSON file
             with open(self.p_tmp_outdir / f'rank-{trainer.global_rank}-{key}.json', 'w') as f:
@@ -117,7 +103,7 @@ class NLQWriter(BasePredictionWriter):
 
         if trainer.is_global_zero:
             # get segmented predictions
-            print('Gathering segmented features...')
+            print('Gathering predicted timestamps...')
             all_seg_preds_train = []
             all_seg_preds_val = []
             for p_pt in self.p_tmp_outdir.glob('*.json'):
@@ -126,7 +112,12 @@ class NLQWriter(BasePredictionWriter):
                     all_seg_preds_val.extend(rank_seg_preds)
                 else:
                     all_seg_preds_train.extend(rank_seg_preds)
-            
+
+            for key in ['train', 'val']:
+                p_pred = self.p_outdir / f'{key}_predictions.json'
+                with open(p_pred, 'w') as f:
+                    json.dump(all_seg_preds_val if key == 'val' else all_seg_preds_train, f)
+
             # TODO: test_submit
             if self.test_submit:
                 print("test_submit")
@@ -139,33 +130,22 @@ class NLQWriter(BasePredictionWriter):
                 metrics = {}
                 for idx, result in enumerate([all_seg_preds_val, all_seg_preds_train]):
                     
-                    split = 'val' if idx == 0 else 'train'
+                    split = 'Validation' if idx == 0 else 'Train'
                     
                     performance, score_str = self.nlq_evaluator.evaluate(result, verbose=False)
-                    metrics[f'{split}_R1_03'] = performance[0, 0] * 100
-                    metrics[f'{split}_R5_03'] = performance[0, 1] * 100
-                    metrics[f'{split}_R1_05'] = performance[1, 0] * 100
-                    metrics[f'{split}_R5_05'] = performance[1, 1] * 100
-                    metrics[f'{split}_Mean_R1'] = (performance[0, 0] + performance[1, 0]) * 100 / 2
+
+                    recall = self.nlq_evaluator.display_results(performance, f'{split} performance')
+                    
+                    print(recall, flush=True)
 
             # remove temporary files
             for p_tmp in self.p_tmp_outdir.glob('*'):
                 p_tmp.unlink()
             self.p_tmp_outdir.rmdir()
-            
-# def _adjust_ddp_config(trainer_cfg):
-#     trainer_cfg = dict(trainer_cfg)
-#     strategy = trainer_cfg.get('strategy', None)
-#     if strategy is None:
-#         trainer_cfg['strategy'] = DDPPlugin(
-#             find_unused_parameters=trainer_cfg['find_unused_parameters'], 
-#             gradient_as_bucket_view=True)
-#     return trainer_cfg
 
 def get_trainer(config, jid, enable_progress_bar=False, enable_checkpointing=True, ddp_timeout=30):
     runtime_outdir: str = config.runtime_outdir
     trainer_config: DictConfig = config.trainer
-    # trainer_config = Namespace(**_adjust_ddp_config(config.trainer))
 
     # Callbacks
     callbacks = [
@@ -214,14 +194,6 @@ def get_trainer(config, jid, enable_progress_bar=False, enable_checkpointing=Tru
 
     if enable_checkpointing:
         callbacks.extend(checkpoint_callbacks)
-
-    # Logger
-    # logger = TensorBoardLogger(
-    #     save_dir=runtime_outdir,
-    #     version=jid,
-    #     name="lit",
-    #     default_hp_metric=False
-    # )
     
     assert jid is not None, 'jid must be provided when loggers are enabled'
     with open_dict(trainer_config):  # obtaining write access
@@ -237,11 +209,6 @@ def get_trainer(config, jid, enable_progress_bar=False, enable_checkpointing=Tru
         trainer_config['strategy'] = DDPStrategy(
             find_unused_parameters=True)
 
-    # trainer = L.Trainer.from_argparse_args(
-    #     trainer_config,
-    #     logger=logger,
-    #     callbacks=callbacks)
-    
     trainer = L.Trainer(
         **trainer_config,
         enable_model_summary=False,

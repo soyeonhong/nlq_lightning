@@ -4,7 +4,6 @@ import random
 from omegaconf import OmegaConf
 
 import torch
-# import pytorch_lightning as pl
 import lightning as L
 from hydra.utils import instantiate
 from transformers import AutoTokenizer
@@ -32,8 +31,7 @@ class LightningModule(L.LightningModule):
         self.save_hyperparameters(OmegaConf.to_container(config, resolve=True))  # to save the config in the checkpoint
 
     def training_step(self, batch, batch_idx):
-        if self.global_rank == 0:
-            torch.cuda.empty_cache()
+        torch.cuda.empty_cache()
         total_loss, ce_loss, time_loss = self.model(**batch)
         self.log('total_loss', total_loss, rank_zero_only=True)
         self.log('ce_loss', ce_loss, rank_zero_only=True)
@@ -67,31 +65,6 @@ class LightningModule(L.LightningModule):
     
     def predict_step(self, batch, batch_idx, dataloader_idx):
         return self.validation_step(batch, batch_idx, dataloader_idx)
-
-    # def _log_some_outputs(self, outputs, name):
-    #     num_val_steps_to_log, num_samples_per_batch_to_log = 5, 3  # Could be configurable via cfg
-    #     steps_to_log_indices = random.sample(range(len(outputs)), k=min(len(outputs), num_val_steps_to_log))
-    #     self._log_indices[name] = {
-    #         'steps': steps_to_log_indices, 
-    #         'samples': [
-    #             random.sample(
-    #                 range(len(outputs[step]['answer'])),
-    #                 k=min(len(outputs[step]['answer']), 
-    #                 num_samples_per_batch_to_log))
-    #             for step in steps_to_log_indices
-    #         ]
-    #     }
-    #     for i, step in enumerate(steps_to_log_indices):
-    #         indices = self._log_indices[name]['samples'][i]
-    #         for b in indices:
-    #             sample = (
-    #                 f'Video: "{outputs[step]["video_id"][b]}". \n'
-    #                 f'Question: "{outputs[step]["question"][b]}". \n'
-    #                 f'Target: "{outputs[step]["answer"][b]}". \n'
-    #                 f'Output: "{outputs[step]["pred_answer"][b]}"'
-    #             )
-    #             self.logger.experiment.add_text(f'{name} {str(i * len(indices) + b)}', sample,
-    #                                             global_step=self.global_step)
 
     def aggregate_metrics(self, outputs, prefix):
         # evaluate CloseQA
@@ -157,26 +130,7 @@ class LightningModule(L.LightningModule):
             metrics[f'{prefix}_R5_05'] = performance[1, 1] * 100
             metrics[f'{prefix}_Mean_R1'] = (performance[0, 0] + performance[1, 0]) * 100 / 2
 
-        # # save predictions
-        # results = []
-        # for output in outputs:
-        #     for i in range(len(output['video_id'])):
-        #         results.append({
-        #             'query_id': output['query_id'][i],
-        #             'pred_answer': output['pred_answer'][i],
-        #             'gt_answer': output['answer'][i],
-        #             'pred_window': (output['nlq_results'][i]['segments'].cpu().detach() / output['sample_ratio'][i]).tolist(),
-        #             'gt_window': self.nlq_evaluator.gt_dict[(output['video_id'][i], output['query_id'][i].split('_')[0])]["language_queries"][int(output['query_id'][i].split('_')[1])]
-        #         })
-        # with open('analysis/VLG_OpenQA.json', 'w') as f:
-        #     json.dump(results, f)
-
         return metrics
-
-    # def training_epoch_end(self, outputs):
-        # self._log_some_outputs(outputs, 'train')
-        # metrics = self.aggregate_metrics(outputs, prefix='train')
-        # self.log_dict(metrics, sync_dist=True)
         
     def on_validation_epoch_end(self): # old_version: val_epoch_end
         
@@ -196,64 +150,6 @@ class LightningModule(L.LightningModule):
         
         metrics = {**val_metrics, **train_metrics}
         self.log_dict(metrics, sync_dist=True)
-
-    # def validation_epoch_end(self, outputs):
-    #     def _mean(key):
-    #         return torch.stack([data[key] for data in outputs]).mean()
-                
-    #     val_metrics = self.aggregate_metrics(outputs[0], prefix='val')
-    #     train_metrics = self.aggregate_metrics(outputs[1], prefix='train')
-        
-    #     val_metrics.update({
-    #         f'val_{name}': _mean(name) for name in outputs[0][0].keys() if 'loss' in name
-    #     })
-        
-    #     train_metrics.update({
-    #         f'train_{name}': _mean(name) for name in outputs[1][0].keys() if 'loss' in name
-    #     })
-        
-    #     metrics = {**val_metrics, **train_metrics}
-    #     self.log_dict(metrics, sync_dist=True)
-
-    # def test_epoch_end(self, outputs):
-        # # self._log_some_outputs(outputs, 'test')
-        # val_metrics = self.aggregate_metrics(outputs[0], prefix='val')
-        # train_metrics = self.aggregate_metrics(outputs[1], prefix='train')
-
-        # metrics = {**val_metrics, **train_metrics}
-
-        # # self._log_some_outputs(outputs, 'test')
-        # # self.log_dict(metrics, sync_dist=True)
-        
-        # pprint(
-        #         {k: v.item() for k, v in metrics.items()},
-        #         sort_dicts=False
-        #     )
-
-    # def save_nlq_results(self, src, dst, preds):
-    #     # aggregate preds
-    #     pred_dict = {}
-    #     for batch_pred in preds:
-    #         for i in range(len(batch_pred['video_id'])):
-    #             qid = batch_pred['query_id'][i]
-    #             sample_ratio = batch_pred['sample_ratio'][i]
-    #             pred_start = batch_pred['nlq_results'][i]['segments'][0].cpu().detach().tolist()[0] / sample_ratio
-    #             pred_end = batch_pred['nlq_results'][i]['segments'][0].cpu().detach().tolist()[1] / sample_ratio
-    #             assert qid not in pred_dict
-    #             pred_dict[qid] = {
-    #                 'pred_start_sec': pred_start,
-    #                 'pred_end_sec': pred_end
-    #             }
-
-    #     save_results = []
-    #     for src_data in json.load(open(src)):
-    #         pred_data = pred_dict[src_data['sample_id']]
-    #         save_data = copy.deepcopy(src_data)
-    #         save_data['moment_start_frame'] = pred_data['pred_start_sec'] * 30
-    #         save_data['moment_end_frame'] = pred_data['pred_end_sec'] * 30
-    #         save_results.append(save_data)
-    #     with open(dst, 'w') as f:
-    #         json.dump(save_results, f)
 
     def configure_optimizers(self):
         optimizer = instantiate(

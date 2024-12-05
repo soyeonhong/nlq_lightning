@@ -221,7 +221,7 @@ class ReferringRecall(object):
 
     def display_results(self, results, title=None):
         display_data = [
-            [f"Rank@{ii}\nmIoU@{jj}" for ii in self.topK for jj in self.thresholds]
+            [f"Recall@{ii}\nIoU@{jj}" for ii in self.topK for jj in self.thresholds]
         ]
         results *= 100
 

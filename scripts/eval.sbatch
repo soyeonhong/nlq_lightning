@@ -10,11 +10,12 @@
 #SBATCH --output=logs/slurm/%j--%x.log
 #SBATCH --error=logs/slurm/%j--%x.err
 
+set -e  # exit on error
+
+hostname
+
 python run.py \
-    'model=groundvqa_b' \
-    'dataset.nlq_train_splits=[NLQ_train]' \
-    'dataset.test_splits=[NLQ_val]' \
     'dataset.batch_size=32' \
-    'trainer.test_only=True' \
-    'trainer.checkpoint_path="/data/soyeonhong/nlq/GroundVQA/checkpoints/GroundVQA_B-NLQ-VLG-val_R1_03=15.5.ckpt"' \
+    'test_only=True' \
+    'checkpoint_path="/data/soyeonhong/nlq/nlq_lightning/checkpoints/GroundVQA_B-NLQ-VLG-val_R1_03=15.5.ckpt"' \
     'load_nlq_head=True'

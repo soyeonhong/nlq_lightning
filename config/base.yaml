@@ -1,5 +1,5 @@
 defaults:
-  - model: groundvqa_s
+  - model: groundvqa_b
   - _self_
   - override hydra/job_logging: none
   - override hydra/hydra_logging: none
@@ -30,7 +30,7 @@ dataset:
 
   qa_train_splits: []
   nlq_train_splits: ['NLQ_train']
-  test_splits: ['QaEgo4D_test', 'QaEgo4D_test_close', 'NLQ_val']
+  test_splits: ['NLQ_val']
   closeqa_weight: 50
 
   tokenizer_path: google/flan-t5-small

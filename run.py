@@ -1,6 +1,5 @@
 import hydra
 import torch
-# import pytorch_lightning as pl
 import lightning as L
 import pytorch_lightning.utilities as L_utils
 
@@ -26,6 +25,12 @@ def write_batch_script(jid, default_root_dir):
     print(f'Writing batch script to {p_script}')
     subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True)
     
+@L_utils.rank_zero_only
+def log_checkpoint_info(checkpoint_path, missing_keys, unexpected_keys):
+    print(f'Load checkpoint: {checkpoint_path}')
+    print(f'Missing Keys: {missing_keys}')
+    print(f'Unexpected Keys: {unexpected_keys}')
+    
 def within_slurm_batch():
     command = (
         "scontrol show jobid " + os.environ.get("SLURM_JOB_ID", "") +
@@ -39,6 +44,7 @@ def within_slurm_batch():
 @hydra.main(config_path='config', config_name='base')
 def train(config: DictConfig):
     L.seed_everything(config.random_seed, workers=True)
+    torch.set_float32_matmul_precision('highest')
     default_root_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
     jid = os.environ.get("SLURM_JOB_ID")
     checkpoint_path = config.checkpoint_path
@@ -52,7 +58,9 @@ def train(config: DictConfig):
     data.setup()
     model = LightningModule(config)
     
+    log_to_console('\n' + "="*80 + '\n')
     log_to_console(model)
+    log_to_console('\n' + "="*80 + '\n')
     
     if checkpoint_path:
         state_dict = torch.load(checkpoint_path, map_location='cpu')['state_dict']
@@ -63,9 +71,8 @@ def train(config: DictConfig):
             print('Train LM decoder head from scratch')
             state_dict = {k: v for k, v in state_dict.items() if not ("decoder" in k or "lm_head" in k)}
         missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-        print(f'Load checkpoint: {checkpoint_path}')
-        print(f'Missing Keys: {missing_keys}')
-        print(f'Unexpected Keys: {unexpected_keys}')
+        # Use the rank_zero_only function for printing
+        log_checkpoint_info(checkpoint_path, missing_keys, unexpected_keys)
         
     trainer, ckpt_callback = get_trainer(config, jid, enable_progress_bar=not within_slurm_batch())
         

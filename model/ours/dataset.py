@@ -12,12 +12,12 @@ import h5py
 import numpy as np
 import torch
 import torch.nn.functional as F
-# import pytorch_lightning as pl
 import lightning as L
 from torch.utils.data import Dataset, DataLoader, ConcatDataset
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data.dataset import Dataset
 from transformers import AutoTokenizer
+import pytorch_lightning.utilities as L_utils
 
 
 class BaseDataset(Dataset):
@@ -235,10 +235,8 @@ class JointDataModule(L.LightningDataModule):
                 print(split)
                 raise NotImplementedError
         self.val_dataset = self.test_dataset = JointDataset(test_datasets, self.config.tokenizer_path)
-
-        print(f'#total train: {len(self.train_dataset)}')
-        print(f'#total val: {len(self.val_dataset)}')
-        print(f'#total test: {len(self.test_dataset)}')
+        
+        self.log_dataset_info(self.train_dataset, self.val_dataset, self.test_dataset)
 
     def train_dataloader(self):
         return DataLoader(
@@ -273,3 +271,9 @@ class JointDataModule(L.LightningDataModule):
             collate_fn=self.val_dataset.collate_fn,
             pin_memory=True
         )
+        
+    @L_utils.rank_zero_only
+    def log_dataset_info(self, train_dataset, val_dataset, test_dataset):
+        print(f'#total train: {len(train_dataset)}')
+        print(f'#total val: {len(val_dataset)}')
+        print(f'#total test: {len(test_dataset)}')
