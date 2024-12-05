@@ -36,7 +36,7 @@ dataset:
   tokenizer_path: google/flan-t5-small
 
   num_workers: 4
-  batch_size: 16
+  batch_size: 6
 
   num_train_samples: 13847
 

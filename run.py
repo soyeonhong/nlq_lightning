@@ -41,7 +41,7 @@ def within_slurm_batch():
     return batch_flag == 1
 
 
-@hydra.main(config_path='config', config_name='base')
+@hydra.main(config_path='config', config_name='base', version_base='1.3')
 def train(config: DictConfig):
     L.seed_everything(config.random_seed, workers=True)
     torch.set_float32_matmul_precision('highest')
@@ -63,7 +63,7 @@ def train(config: DictConfig):
     log_to_console('\n' + "="*80 + '\n')
     
     if checkpoint_path:
-        state_dict = torch.load(checkpoint_path, map_location='cpu')['state_dict']
+        state_dict = torch.load(checkpoint_path, map_location='cpu', weights_only=True)['state_dict']
         if not config.load_nlq_head:
             print('Train NLQ head from scratch')
             state_dict = {k: v for k, v in state_dict.items() if not "nlq_head" in k}

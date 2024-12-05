@@ -188,7 +188,7 @@ def get_trainer(config, jid, enable_progress_bar=False, enable_checkpointing=Tru
                 monitor='val_R1_03',
                 mode='max',
                 save_top_k=1,
-                filename='{epoch}-val_R1_03={val_R1_03:.3f}'
+                filename='epoch={epoch}-{val_R1_03:.3f}'
             )
         )
 

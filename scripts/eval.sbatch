@@ -17,5 +17,5 @@ hostname
 python run.py \
     'dataset.batch_size=32' \
     'test_only=True' \
-    'checkpoint_path="/data/soyeonhong/nlq/nlq_lightning/checkpoints/GroundVQA_B-NLQ-VLG-val_R1_03=15.5.ckpt"' \
+    'checkpoint_path="/data/soyeonhong/nlq/nlq_lightning/outputs/batch/2024-12-04/154138/epoch=39-val_R1_03=val_R1_03=7.508.ckpt"' \
     'load_nlq_head=True'
