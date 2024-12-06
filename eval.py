@@ -14,9 +14,6 @@ from rouge_score.tokenize import tokenize
 from torchmetrics.functional import sacre_bleu_score
 from nltk.tokenize import word_tokenize
 from nltk.corpus import wordnet
-import nltk
-
-nltk.download('wordnet')
 
 
 class AverageMeter(object):

@@ -1,7 +1,3 @@
-import json
-import copy
-import random
-
 import torch
 import pytorch_lightning as pl
 from hydra.utils import instantiate
@@ -10,10 +6,9 @@ from torch.optim.lr_scheduler import OneCycleLR
 
 from eval import calc_metrics
 from eval_nlq import ReferringRecall
-from pprint import pprint
 
 class LightningModule(pl.LightningModule):
-    def __init__(self, config, total_steps):
+    def __init__(self, config):
         super().__init__()
         self.config = config
         self.tokenizer = AutoTokenizer.from_pretrained(config.dataset.tokenizer_path)
@@ -24,9 +19,9 @@ class LightningModule(pl.LightningModule):
             ann_dir=config.dataset.ann_dir
         )
         self._log_indices = {}
-        self.total_steps = total_steps
 
     def training_step(self, batch, batch_idx):
+        torch.cuda.empty_cache()
         total_loss, ce_loss, time_loss = self.model(**batch)
         self.log('total_loss', total_loss, rank_zero_only=True)
         self.log('ce_loss', ce_loss, rank_zero_only=True)
@@ -50,33 +45,11 @@ class LightningModule(pl.LightningModule):
         }
     
     def test_step(self, batch, batch_idx, dataloader_idx):
+        pass
+    
+    def predict_step(self, batch, batch_idx, dataloader_idx):
         return self.validation_step(batch, batch_idx, dataloader_idx)
-
-    def _log_some_outputs(self, outputs, name):
-        num_val_steps_to_log, num_samples_per_batch_to_log = 5, 3  # Could be configurable via cfg
-        steps_to_log_indices = random.sample(range(len(outputs)), k=min(len(outputs), num_val_steps_to_log))
-        self._log_indices[name] = {
-            'steps': steps_to_log_indices, 
-            'samples': [
-                random.sample(
-                    range(len(outputs[step]['answer'])),
-                    k=min(len(outputs[step]['answer']), 
-                    num_samples_per_batch_to_log))
-                for step in steps_to_log_indices
-            ]
-        }
-        for i, step in enumerate(steps_to_log_indices):
-            indices = self._log_indices[name]['samples'][i]
-            for b in indices:
-                sample = (
-                    f'Video: "{outputs[step]["video_id"][b]}". \n'
-                    f'Question: "{outputs[step]["question"][b]}". \n'
-                    f'Target: "{outputs[step]["answer"][b]}". \n'
-                    f'Output: "{outputs[step]["pred_answer"][b]}"'
-                )
-                self.logger.experiment.add_text(f'{name} {str(i * len(indices) + b)}', sample,
-                                                global_step=self.global_step)
-
+    
     def aggregate_metrics(self, outputs, prefix):
         # evaluate CloseQA
         all_hypos = []
@@ -141,20 +114,6 @@ class LightningModule(pl.LightningModule):
             metrics[f'{prefix}_R5_05'] = performance[1, 1] * 100
             metrics[f'{prefix}_Mean_R1'] = (performance[0, 0] + performance[1, 0]) * 100 / 2
 
-        # # save predictions
-        # results = []
-        # for output in outputs:
-        #     for i in range(len(output['video_id'])):
-        #         results.append({
-        #             'query_id': output['query_id'][i],
-        #             'pred_answer': output['pred_answer'][i],
-        #             'gt_answer': output['answer'][i],
-        #             'pred_window': (output['nlq_results'][i]['segments'].cpu().detach() / output['sample_ratio'][i]).tolist(),
-        #             'gt_window': self.nlq_evaluator.gt_dict[(output['video_id'][i], output['query_id'][i].split('_')[0])]["language_queries"][int(output['query_id'][i].split('_')[1])]
-        #         })
-        # with open('analysis/VLG_OpenQA.json', 'w') as f:
-        #     json.dump(results, f)
-
         return metrics
 
     # def training_epoch_end(self, outputs):
@@ -180,46 +139,6 @@ class LightningModule(pl.LightningModule):
         metrics = {**val_metrics, **train_metrics}
         self.log_dict(metrics, sync_dist=True)
 
-    def test_epoch_end(self, outputs):
-        # self._log_some_outputs(outputs, 'test')
-        val_metrics = self.aggregate_metrics(outputs[0], prefix='val')
-        train_metrics = self.aggregate_metrics(outputs[1], prefix='train')
-
-        metrics = {**val_metrics, **train_metrics}
-
-        # self._log_some_outputs(outputs, 'test')
-        # self.log_dict(metrics, sync_dist=True)
-        
-        pprint(
-                {k: v.item() for k, v in metrics.items()},
-                sort_dicts=False
-            )
-
-    def save_nlq_results(self, src, dst, preds):
-        # aggregate preds
-        pred_dict = {}
-        for batch_pred in preds:
-            for i in range(len(batch_pred['video_id'])):
-                qid = batch_pred['query_id'][i]
-                sample_ratio = batch_pred['sample_ratio'][i]
-                pred_start = batch_pred['nlq_results'][i]['segments'][0].cpu().detach().tolist()[0] / sample_ratio
-                pred_end = batch_pred['nlq_results'][i]['segments'][0].cpu().detach().tolist()[1] / sample_ratio
-                assert qid not in pred_dict
-                pred_dict[qid] = {
-                    'pred_start_sec': pred_start,
-                    'pred_end_sec': pred_end
-                }
-
-        save_results = []
-        for src_data in json.load(open(src)):
-            pred_data = pred_dict[src_data['sample_id']]
-            save_data = copy.deepcopy(src_data)
-            save_data['moment_start_frame'] = pred_data['pred_start_sec'] * 30
-            save_data['moment_end_frame'] = pred_data['pred_end_sec'] * 30
-            save_results.append(save_data)
-        with open(dst, 'w') as f:
-            json.dump(save_results, f)
-
     def configure_optimizers(self):
         optimizer = instantiate(
             self.config.optim.optimizer,
@@ -230,7 +149,7 @@ class LightningModule(pl.LightningModule):
             lr_scheduler = OneCycleLR(
                 optimizer=optimizer,
                 max_lr=self.config.optim.optimizer.lr,
-                total_steps=self.total_steps,
+                total_steps=self.config.total_steps,
                 anneal_strategy='linear'
             )
             return {

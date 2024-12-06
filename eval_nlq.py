@@ -7,136 +7,12 @@ Natural Language Queries (NLQ)
 
 from __future__ import absolute_import, division, print_function, unicode_literals
 
-import argparse
 import json
 
 import numpy as np
 import torch
 import terminaltables
 from pathlib import Path
-
-
-def compute_overlap(pred, gt):
-    # check format
-    assert isinstance(pred, list) and isinstance(gt, list)
-    pred_is_list = isinstance(pred[0], list)
-    gt_is_list = isinstance(gt[0], list)
-    pred = pred if pred_is_list else [pred]
-    gt = gt if gt_is_list else [gt]
-    # compute overlap
-    pred, gt = np.array(pred), np.array(gt)
-    inter_left = np.maximum(pred[:, 0, None], gt[None, :, 0])
-    inter_right = np.minimum(pred[:, 1, None], gt[None, :, 1])
-    inter = np.maximum(0.0, inter_right - inter_left)
-    union_left = np.minimum(pred[:, 0, None], gt[None, :, 0])
-    union_right = np.maximum(pred[:, 1, None], gt[None, :, 1])
-    union = np.maximum(1e-12, union_right - union_left)
-    overlap = 1.0 * inter / union
-    # reformat output
-    overlap = overlap if gt_is_list else overlap[:, 0]
-    overlap = overlap if pred_is_list else overlap[0]
-    return overlap
-
-
-def time_to_index(start_time, end_time, num_units, duration):
-    s_times = np.arange(0, num_units).astype(np.float32) / float(num_units) * duration
-    e_times = (
-        np.arange(1, num_units + 1).astype(np.float32) / float(num_units) * duration
-    )
-    candidates = np.stack(
-        [
-            np.repeat(s_times[:, None], repeats=num_units, axis=1),
-            np.repeat(e_times[None, :], repeats=num_units, axis=0),
-        ],
-        axis=2,
-    ).reshape((-1, 2))
-    overlaps = compute_overlap(candidates.tolist(), [start_time, end_time]).reshape(
-        num_units, num_units
-    )
-    start_index = np.argmax(overlaps) // num_units
-    end_index = np.argmax(overlaps) % num_units
-    return start_index, end_index, overlaps
-
-
-def index_to_time(start_index, end_index, num_units, duration):
-    s_times = np.arange(0, num_units).astype(np.float32) * duration / float(num_units)
-    e_times = (
-        np.arange(1, num_units + 1).astype(np.float32) * duration / float(num_units)
-    )
-    start_time = s_times[start_index]
-    end_time = e_times[end_index]
-    return start_time, end_time
-
-
-def display_results(results, mIoU, thresholds, topK, title=None):
-    display_data = [
-        [f"Rank@{ii}\nmIoU@{jj}" for ii in topK for jj in thresholds] + ["mIoU"]
-    ]
-    results *= 100
-    mIoU *= 100
-    display_data.append(
-        [
-            f"{results[jj][ii]:.02f}"
-            for ii in range(len(topK))
-            for jj in range(len(thresholds))
-        ]
-        + [f"{mIoU:.02f}"]
-    )
-    table = terminaltables.AsciiTable(display_data, title)
-    for ii in range(len(thresholds) * len(topK)):
-        table.justify_columns[ii] = "center"
-    return table.table
-
-
-def compute_IoU(pred, gt):
-    """Compute the IoU given predicted and ground truth windows."""
-    assert isinstance(pred, list) and isinstance(gt, list)
-    pred_is_list = isinstance(pred[0], list)
-    gt_is_list = isinstance(gt[0], list)
-    if not pred_is_list:
-        pred = [pred]
-    if not gt_is_list:
-        gt = [gt]
-    pred, gt = np.array(pred), np.array(gt)
-    inter_left = np.maximum(pred[:, 0, None], gt[None, :, 0])
-    inter_right = np.minimum(pred[:, 1, None], gt[None, :, 1])
-    inter = np.maximum(0.0, inter_right - inter_left)
-    union_left = np.minimum(pred[:, 0, None], gt[None, :, 0])
-    union_right = np.maximum(pred[:, 1, None], gt[None, :, 1])
-    union = np.maximum(0.0, union_right - union_left)
-    overlap = 1.0 * inter / union
-    if not gt_is_list:
-        overlap = overlap[:, 0]
-    if not pred_is_list:
-        overlap = overlap[0]
-    return overlap
-
-
-def evaluate_nlq_performance(
-    predictions, ground_truth, thresholds, topK, per_instance=False
-):
-    results = [[[] for _ in topK] for _ in thresholds]
-    average_IoU = []
-    for pred, gt in zip(predictions, ground_truth):
-        # Compute overlap and recalls.
-        overlap = compute_IoU(pred, gt)
-        average_IoU.append(np.mean(np.sort(overlap[0])[-3:]))
-        for tt, threshold in enumerate(thresholds):
-            for rr, KK in enumerate(topK):
-                results[tt][rr].append((overlap > threshold)[:KK].any())
-
-    mean_results = np.array(results).mean(axis=-1)
-    mIoU = np.mean(average_IoU)
-    if per_instance:
-        per_instance_results = {
-            "overlap": overlap,
-            "average_IoU": average_IoU,
-            "results": results,
-        }
-        return mean_results, mIoU, per_instance_results
-    else:
-        return mean_results, mIoU
-
 
 def load_jsonl(filename):
     with open(filename, "r") as f:
@@ -316,30 +192,3 @@ class ReferringRecall(object):
             print(score_str, flush=True)
 
         return recall_x_iou
-
-
-def segment_iou(target_segment, candidate_segments):
-    """Compute the temporal intersection over union between a
-    target segment and all the test segments.
-    Parameters
-    ----------
-    target_segment : 1d array
-        Temporal target segment containing [starting, ending] times.
-    candidate_segments : 2d array
-        Temporal candidate segments containing N x [starting, ending] times.
-    Outputs
-    -------
-    tiou : 1d array
-        Temporal intersection over union score of the N's candidate segments.
-    """
-    tt1 = np.maximum(target_segment[0], candidate_segments[:, 0])
-    tt2 = np.minimum(target_segment[1], candidate_segments[:, 1])
-    # Intersection including Non-negative overlap score.
-    segments_intersection = (tt2 - tt1).clip(0)
-    # Segment union.
-    segments_union = (candidate_segments[:, 1] - candidate_segments[:, 0]) \
-                     + (target_segment[1] - target_segment[0]) - segments_intersection
-    # Compute overlap as the ratio of the intersection
-    # over union of two segments.
-    tIoU = segments_intersection.astype(float) / segments_union
-    return tIoU

@@ -16,3 +16,4 @@ ffmpeg-python==0.2.0
 transformers==4.35.2
 accelerate==0.24.1
 bitsandbytes
+huggingface_hub==0.24.7

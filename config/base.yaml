@@ -13,6 +13,11 @@ dd: ${now:%d}  # day
 runtime_outdir: ${runtime_outdir:}
 base_lr: 0.0001
 total_bsz: ${eval:'${dataset.batch_size} * ${oc.env:SLURM_GPUS_ON_NODE,8} * ${oc.env:SLURM_JOB_NUM_NODES,1}'}
+total_steps: ${eval:'${trainer.max_epochs} * ${dataset.num_train_samples} // ${oc.env:SLURM_GPUS_ON_NODE,8} // ${dataset.batch_size}'}
+load_nlq_head: True
+load_decoder: True
+run_type: 'Train'
+checkpoint_path: null
 
 dataset:
   data_dir: '/data/soyeonhong/nlq/nlq_lightning/data/unified'
@@ -22,14 +27,16 @@ dataset:
   max_v_len: 1200
 
   qa_train_splits: []
-  nlq_train_splits: []
-  test_splits: ['QaEgo4D_test', 'QaEgo4D_test_close', 'NLQ_val']
+  nlq_train_splits: ['NLQ_train']
+  test_splits: ['NLQ_val']
   closeqa_weight: 50
 
   tokenizer_path: google/flan-t5-small
 
   num_workers: 4
   batch_size: 16
+
+  num_train_samples: 13847
 
 trainer:
   detect_anomaly: True

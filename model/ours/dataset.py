@@ -16,6 +16,13 @@ from torch.utils.data import Dataset, DataLoader, ConcatDataset
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data.dataset import Dataset
 from transformers import AutoTokenizer
+from pytorch_lightning.utilities.distributed import rank_zero_only
+
+@rank_zero_only
+def log_data_info(train_dataset, val_dataset, test_dataset):
+    print(f'#train: {len(train_dataset)}')
+    print(f'#val: {len(val_dataset)}')
+    print(f'#test: {len(test_dataset)}')
 
 
 class BaseDataset(Dataset):
@@ -207,7 +214,6 @@ class JointDataModule(pl.LightningDataModule):
         
     def setup(self, stage=None):
         CloseQA_weight = self.config.get('closeqa_weight', 50)
-        print(f'CloseQA percentage: {CloseQA_weight}%')
         self.train_dataset = JointDataset([
                 QADataset(self.config.data_dir, train_split, self.config.feature_type, self.config.max_v_len, 'Mixed', CloseQA_weight)
                 for train_split in self.config.qa_train_splits
@@ -230,10 +236,8 @@ class JointDataModule(pl.LightningDataModule):
                 print(split)
                 raise NotImplementedError
         self.val_dataset = self.test_dataset = JointDataset(test_datasets, self.config.tokenizer_path)
-
-        print(f'#total train: {len(self.train_dataset)}')
-        print(f'#total val: {len(self.val_dataset)}')
-        print(f'#total test: {len(self.test_dataset)}')
+        
+        log_data_info(self.train_dataset, self.val_dataset, self.test_dataset)
 
     def train_dataloader(self):
         return DataLoader(
