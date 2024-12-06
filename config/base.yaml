@@ -1,5 +1,5 @@
 defaults:
-  - model: groundvqa_s
+  - model: groundvqa_b
   - _self_
   - override hydra/job_logging: none
   - override hydra/hydra_logging: none
@@ -34,7 +34,7 @@ dataset:
   tokenizer_path: google/flan-t5-small
 
   num_workers: 4
-  batch_size: 16
+  batch_size: 6
 
   num_train_samples: 13847
 
@@ -43,7 +43,7 @@ trainer:
   max_epochs: 100
   accumulate_grad_batches: 1
   auto_resume: False
-  gpus: 1
+  gpus: ${oc.env:SLURM_GPUS_ON_NODE,8}
   log_every_n_steps: 1
   auto_lr_find: False
   enable_progress_bar: True
@@ -55,14 +55,22 @@ trainer:
   gradient_clip_val: 1.0
   save_nlq_results: null
   deterministic: True
-  load_decoder: True
-  load_nlq_head: True
   ignore_existing_checkpoints: True
   lr_find_kwargs: {'min_lr': 5e-06, 'max_lr': 0.01}
   random_seed: 42
   test_only: False
   reset_early_stopping_criterion: False
-  checkpoint_path: null
+  logger:
+    - _target_: pytorch_lightning.loggers.WandbLogger
+      project: 'ltvu_NLQ'
+      entity: 'team-khu'
+      group: 'base'  # for grouping runs (does not mean an organization)
+      job_type: ${job_type}  # debug or batch
+      name: sy-${jid}  # displayname
+      tags: []  # for filtering
+      notes: null  # real note, a log string
+      save_dir: ${runtime_outdir}  # logs will be saved under THIS/wandb
+      log_model: False    # as we use custom checkpointing
   
 optim:
   optimizer:
