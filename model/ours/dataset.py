@@ -165,7 +165,8 @@ class QADataset(BaseDataset):
 class JointDataset(ConcatDataset):
     def __init__(self, datasets: Iterable[Dataset], tokenizer_path) -> None:
         super().__init__(datasets)
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, 
+                                                       local_files_only=True)
         self.tokenizer.pad_token = self.tokenizer.eos_token  # BUG: Set this per convenience for GPT-2
 
     def collate_fn(self, batch):
