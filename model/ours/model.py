@@ -5,13 +5,51 @@ from transformers.modeling_outputs import BaseModelOutput
 
 from model.ours.nlq_head import NLQHead
 
+class InferenceContext:
+    def __init__(self, fp32_mm_precision, enable_autocast, autocast_dtype, enable_no_grad):
+        self.fp32_mm_precision = fp32_mm_precision
+        self.enable_no_grad = enable_no_grad
+        self.enable_autocast = enable_autocast
+        self.autocast_dtype = autocast_dtype
+        self.prec_prev = None
 
+    def __enter__(self):
+        self.prec_prev = torch.get_float32_matmul_precision()
+        torch.set_float32_matmul_precision(self.fp32_mm_precision)
+        if self.enable_no_grad:
+            self.no_grad = torch.no_grad()
+            self.no_grad.__enter__()
+        self.autocast = torch.autocast(device_type='cuda', dtype=self.autocast_dtype, enabled=self.enable_autocast)
+        self.autocast.__enter__()
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.autocast.__exit__(exc_type, exc_value, traceback)
+        if self.enable_no_grad:
+            self.no_grad.__exit__(exc_type, exc_value, traceback)
+        torch.set_float32_matmul_precision(self.prec_prev)
+        
 class GroundVQA(nn.Module):
-    def __init__(self, lm_path, input_dim, freeze_word=False, max_v_len=256):
+    def __init__(self, 
+        lm_path, 
+        input_dim, 
+
+        backbone_precision,
+        backbone_fp32_mm_precision,
+        fix_backbone,
+        
+        freeze_word=False,
+        max_v_len=256):
         super().__init__()
 
         if not isinstance(input_dim, int):
             input_dim = input_dim.v_dim
+            
+        prec = backbone_precision
+        dtypes = {'bf16': torch.bfloat16, 'fp32': torch.float32, 'fp16': torch.float16}
+        self.backbone_dtype = dtypes[prec]
+        self.backbone_autocast = prec != 'fp32'
+        self.backbone_fp32_mm_precision = backbone_fp32_mm_precision
+        self.fix_backbone = fix_backbone
 
         self.lm: PreTrainedModel = AutoModelForSeq2SeqLM.from_pretrained(lm_path, local_files_only=True)
 
@@ -77,8 +115,16 @@ class GroundVQA(nn.Module):
         q_feat = self.lm.encoder.embed_tokens(q_token)
         lm_input = torch.cat([q_feat, v_feat], dim=1)
         lm_mask = torch.cat([q_mask, v_mask], dim=1)
-        out = self.lm.encoder(
-            inputs_embeds=lm_input,
-            attention_mask=lm_mask
-        )
+        with self.backbone_context():
+            out = self.lm.encoder(
+                inputs_embeds=lm_input,
+                attention_mask=lm_mask
+            )
         return out.last_hidden_state, lm_mask
+    
+    def backbone_context(self):
+        return InferenceContext(
+            self.backbone_fp32_mm_precision,
+            self.backbone_autocast,
+            self.backbone_dtype,
+            self.fix_backbone)

@@ -19,6 +19,12 @@ from torch.utils.data.dataset import Dataset
 from transformers import AutoTokenizer
 import pytorch_lightning.utilities as L_utils
 
+@L_utils.rank_zero_only
+def log_dataset_info(train_dataset, val_dataset, test_dataset):
+    print(f'#total train: {len(train_dataset)}')
+    print(f'#total val: {len(val_dataset)}')
+    print(f'#total test: {len(test_dataset)}')
+
 
 class BaseDataset(Dataset):
     def __init__(self, data_dir, split, feature_type, max_v_len):
@@ -236,7 +242,7 @@ class JointDataModule(L.LightningDataModule):
                 raise NotImplementedError
         self.val_dataset = self.test_dataset = JointDataset(test_datasets, self.config.tokenizer_path)
         
-        self.log_dataset_info(self.train_dataset, self.val_dataset, self.test_dataset)
+        log_dataset_info(self.train_dataset, self.val_dataset, self.test_dataset)
 
     def train_dataloader(self):
         return DataLoader(
@@ -272,8 +278,4 @@ class JointDataModule(L.LightningDataModule):
             pin_memory=True
         )
         
-    @L_utils.rank_zero_only
-    def log_dataset_info(self, train_dataset, val_dataset, test_dataset):
-        print(f'#total train: {len(train_dataset)}')
-        print(f'#total val: {len(val_dataset)}')
-        print(f'#total test: {len(test_dataset)}')
+    

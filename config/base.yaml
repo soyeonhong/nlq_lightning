@@ -20,6 +20,8 @@ load_nlq_head: True
 load_decoder: True
 test_only: False
 checkpoint_path: null
+backbone_precision: 'fp32'  # bf16 or fp32 or fp16
+backbone_fp32_mm_precision: 'highest'  # medium or high or highest
 
 dataset:
   data_dir: '/data/soyeonhong/nlq/nlq_lightning/data/unified'

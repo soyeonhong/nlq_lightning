@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name gvqa_from_scratch
+#SBATCH --job-name gvqa_from_scratch_bf16
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-gpu=8
 #SBATCH --mem-per-gpu=29G
@@ -15,5 +15,10 @@ set -e  # exit on error
 hostname
 
 python run.py \
-    "dataset.batch_size=6" 
+    'backbone_fp32_mm_precision=medium' \
+    'backbone_precision=bf16' \
+    'trainer.precision=bf16' \
+    'dataset.batch_size=6'
+
+    
 

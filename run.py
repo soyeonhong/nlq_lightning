@@ -44,7 +44,7 @@ def within_slurm_batch():
 @hydra.main(config_path='config', config_name='base', version_base='1.3')
 def train(config: DictConfig):
     L.seed_everything(config.random_seed, workers=True)
-    torch.set_float32_matmul_precision('highest')
+    torch.set_float32_matmul_precision(config.backbone_fp32_mm_precision)
     default_root_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
     jid = os.environ.get("SLURM_JOB_ID")
     checkpoint_path = config.checkpoint_path

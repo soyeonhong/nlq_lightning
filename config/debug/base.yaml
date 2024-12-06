@@ -5,4 +5,6 @@
 
 total_bsz: 6
 
-
+trainer:
+  fast_dev_run: 2
+  devices: 1

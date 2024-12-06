@@ -2,3 +2,6 @@ _target_: model.ours.model.GroundVQA
 lm_path: google/flan-t5-base
 input_dim: ${dataset.feature_dim}
 freeze_word: True
+backbone_precision: ${backbone_precision}
+backbone_fp32_mm_precision: ${backbone_fp32_mm_precision}
+fix_backbone: False
