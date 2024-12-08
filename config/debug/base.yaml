@@ -10,4 +10,7 @@ trainer:
   devices: 1
   gpus: 1
 
+model:
+  debug: true
+
 

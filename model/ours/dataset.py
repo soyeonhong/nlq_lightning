@@ -26,11 +26,26 @@ def log_data_info(train_dataset, val_dataset, test_dataset):
 
 
 class BaseDataset(Dataset):
-    def __init__(self, data_dir, split, feature_type, max_v_len):
+    def __init__(self, config, data_dir, split, feature_type, max_v_len):
         super().__init__()
         self.split = split
         self.video_features = h5py.File(os.path.join(data_dir, feature_type + '.hdf5'), 'r')
-        self.annotations = json.loads(Path(os.path.join(data_dir, f'annotations.{split}.json')).read_text())
+        self.object_qa = config.get('object_qa')
+        
+        if self.object_qa and 'train' in self.split:
+            self.annotations = json.loads(Path(os.path.join(data_dir, f'annotations.{split}_object.json')).read_text())
+            self.p_env_dir = Path(config.env_dir)
+            self.env_interval = config.env_interval
+            self.slice_int = config.slice_interval
+            self.search_int = config.search_interval
+            
+            required_clip_uids = set(a['video_id'] for a in self.annotations)
+            valid_clip_uids = set(video_id.stem for video_id in list(self.p_env_dir.glob('**/*.json')))
+            diff = required_clip_uids - valid_clip_uids
+            print(f'Clips not existing in LLaVA: {diff} ({len(diff)})')
+            self.annotations = [a for a in self.annotations if a['video_id'] in valid_clip_uids]
+        else:
+            self.annotations = json.loads(Path(os.path.join(data_dir, f'annotations.{split}.json')).read_text())
         self.max_v_len = max_v_len
         print(f'{split} set: {len(self.annotations)}')
     
@@ -50,13 +65,20 @@ class BaseDataset(Dataset):
 
 
 class NLQDataset(BaseDataset):
-    def __init__(self, data_dir, split, feature_type, max_v_len):
-        super().__init__(data_dir, split, feature_type, max_v_len)
+    def __init__(self, config, data_dir, split, feature_type, max_v_len):
+        super().__init__(config, data_dir, split, feature_type, max_v_len)
 
     def __getitem__(self, index):
         video_id = self.annotations[index]['video_id']
         query_id = self.annotations[index].get('sample_id')
         question = self.annotations[index]['question']
+        clip_duration = self.annotations[index].get('clip_duration')
+        if self.object_qa and 'train' in self.split:
+            p_env_data = self.p_env_dir / f'{video_id}.json'
+        
+        if self.object_qa and 'train' in self.split:
+            env_datas = json.loads(p_env_data.read_text())
+            ori_video_feature = torch.from_numpy(self.video_features[video_id][:])
 
         video_feature, v_len, sample_ratio = self._get_video_feature(video_id)
 
@@ -80,8 +102,8 @@ class NLQDataset(BaseDataset):
         segments = torch.tensor([[start_time, end_time]]) * 30 / 16.043 * sample_ratio
         labels = torch.zeros(len(segments), dtype=torch.int64)
         one_hot_labels = F.one_hot(labels, 1)  # (1, 1)
-
-        return {
+        
+        sample = {
             'video_id': video_id,
             'question': f"question: {question} video: ",
             'answer': 'None',
@@ -93,6 +115,63 @@ class NLQDataset(BaseDataset):
             'sample_ratio': sample_ratio,
             'task': 'NLQ'
         }
+        
+        if self.object_qa and 'train' in self.split:
+            query_objs = self.annotations[index]['entities']['values']
+            
+            # positive question
+            if len(query_objs) == 1:
+                obj_q_pos = f"Is there a {query_objs[0]}?"
+            else:
+                obj_q_pos = f"Are there {', '.join(query_objs[:-1])} and {query_objs[-1]}?"
+            q_str_pos = f"question: {obj_q_pos} video: "
+            
+            # negative question
+            time_per_v_feat = clip_duration  / v_len
+            center = (end_time + start_time) // 2
+            slice_t_s = max(0, center - self.slice_int / 2)
+            slice_t_e = min(clip_duration, center + self.slice_int / 2)
+            slice_int_idx = self.slice_int // time_per_v_feat
+            
+            if slice_t_s == 0:
+                slice_idx_s = 0
+                slice_idx_e = slice_int_idx
+            elif slice_t_e == clip_duration:
+                slice_idx_e = v_len - 1
+                slice_idx_s = slice_idx_e - slice_int_idx
+            else:
+                slice_idx_s = slice_t_s // time_per_v_feat
+                slice_idx_e = slice_idx_s + slice_int_idx
+                    
+            slice_idx_s , slice_idx_e = int(slice_idx_s), int(slice_idx_e)
+            
+            env_search_idx_s = max(0, math.floor(slice_t_s // self.env_interval) - 1 - self.search_int // 2)
+            env_search_idx_e = min(math.ceil(slice_t_e / self.env_interval) - 1 + self.search_int // 2, len(env_datas) - 1)
+            
+            obj_list = []
+            obj_gt_list = []
+            
+            for env_data in env_datas[env_search_idx_s:env_search_idx_e + 1]:
+                obj_list.extend(env_data['entities']['values'])
+                if slice_t_s <= env_data['start'] <= slice_t_e:
+                    obj_gt_list.extend(env_data['entities']['values'])
+                    
+            obj_list = list(set(obj_list) - set(obj_gt_list))
+            
+            if obj_list == []:
+                q_str_neg = q_str_pos
+            else:      
+                obj_q_neg = f"Is there a {random.choice(obj_list)}?"
+                q_str_neg = f"question: {obj_q_neg} video: "
+            
+            sample['question_obj_pos'] = q_str_pos
+            sample['question_obj_neg'] = q_str_neg
+            sample['answer_obj_pos'] = 'Yes'
+            sample['answer_obj_neg'] = 'No'
+            sample['slice'] = [slice_idx_s, slice_idx_e]
+            sample['v_feat_for_obj'] = ori_video_feature[slice_idx_s:slice_idx_e + 1]
+
+        return sample
 
 
 class QADataset(BaseDataset):
@@ -168,6 +247,8 @@ class JointDataset(ConcatDataset):
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, 
                                                        local_files_only=True)
         self.tokenizer.pad_token = self.tokenizer.eos_token  # BUG: Set this per convenience for GPT-2
+        self.object_qa = datasets[0].object_qa
+        self.split = datasets[0].split
 
     def collate_fn(self, batch):
         question = [b['question'] for b in batch]
@@ -200,6 +281,35 @@ class JointDataset(ConcatDataset):
             'labels': labels,
             'task': [b['task'] for b in batch]
         }
+        
+        if self.object_qa and 'train' in self.split:
+            question_obj_pos = [b['question_obj_pos'] for b in batch]
+            question_obj_neg = [b['question_obj_neg'] for b in batch]
+            question_obj_pos_tok = self.tokenizer(question_obj_pos, padding=True, return_tensors='pt', add_special_tokens=False)
+            question_obj_neg_tok = self.tokenizer(question_obj_neg, padding=True, return_tensors='pt', add_special_tokens=False)
+            
+            answer_obj_pos = [b['answer_obj_pos'] for b in batch]
+            answer_obj_neg = [b['answer_obj_neg'] for b in batch]
+            
+            labels_obj_pos = self.tokenizer(answer_obj_pos, padding=True, return_tensors='pt').input_ids
+            labels_obj_neg = self.tokenizer(answer_obj_neg, padding=True, return_tensors='pt').input_ids
+            
+            result['q_text_obj_pos'] = question_obj_pos
+            result['q_token_obj_pos'] = question_obj_pos_tok.input_ids
+            result['q_mask_obj_pos'] = question_obj_pos_tok.attention_mask.bool()
+            result['q_text_obj_neg'] = question_obj_neg
+            result['q_token_obj_neg'] = question_obj_neg_tok.input_ids
+            result['q_mask_obj_neg'] = question_obj_neg_tok.attention_mask.bool()
+            result['labels_obj_pos'] = labels_obj_pos
+            result['labels_obj_neg'] = labels_obj_neg
+            result['slice'] = torch.stack([torch.tensor(b['slice']) for b in batch])
+            
+            video_feature_for_obj = [b['v_feat_for_obj'] for b in batch]
+            video_feature_padded_for_obj = pad_sequence(video_feature_for_obj, batch_first=True)
+            video_mask_for_obj = pad_sequence([torch.ones(len(v)) for v in video_feature_for_obj], batch_first=True).bool()
+            
+            result['v_feat_for_obj'] = video_feature_padded_for_obj
+            result['v_mask_for_obj'] = video_mask_for_obj
 
         return result
 
@@ -215,11 +325,9 @@ class JointDataModule(pl.LightningDataModule):
         
     def setup(self, stage=None):
         CloseQA_weight = self.config.get('closeqa_weight', 50)
-        self.train_dataset = JointDataset([
-                QADataset(self.config.data_dir, train_split, self.config.feature_type, self.config.max_v_len, 'Mixed', CloseQA_weight)
-                for train_split in self.config.qa_train_splits
-            ] + [
-                NLQDataset(self.config.data_dir, train_split, self.config.feature_type, self.config.max_v_len)
+        self.train_dataset = JointDataset(                         
+            [
+                NLQDataset(self.config, self.config.data_dir, train_split, self.config.feature_type, self.config.max_v_len)
                 for train_split in self.config.nlq_train_splits
             ],
             self.config.tokenizer_path
@@ -228,11 +336,11 @@ class JointDataModule(pl.LightningDataModule):
         test_datasets = []
         for split in self.config.test_splits:
             if split == 'QaEgo4D_test':
-                test_datasets.append(QADataset(self.config.data_dir, split, self.config.feature_type, self.config.max_v_len, 'OpenQA'))
+                test_datasets.append(QADataset(self.config, self.config.data_dir, split, self.config.feature_type, self.config.max_v_len, 'OpenQA'))
             elif split == 'QaEgo4D_test_close':
-                test_datasets.append(QADataset(self.config.data_dir, split, self.config.feature_type, self.config.max_v_len, 'CloseQA'))
+                test_datasets.append(QADataset(self.config, self.config.data_dir, split, self.config.feature_type, self.config.max_v_len, 'CloseQA'))
             elif split in ['NLQ_val', 'NLQ_test_unannotated']:
-                test_datasets.append(NLQDataset(self.config.data_dir, split, self.config.feature_type, self.config.max_v_len))
+                test_datasets.append(NLQDataset(self.config, self.config.data_dir, split, self.config.feature_type, self.config.max_v_len))
             else:
                 print(split)
                 raise NotImplementedError

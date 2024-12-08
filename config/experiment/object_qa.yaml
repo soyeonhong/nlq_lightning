@@ -1,0 +1,13 @@
+# @package _global_
+
+# usage: python run.py +experiment=object_qa
+
+dataset:
+  object_qa: True
+  env_dir: '/data/soyeonhong/nlq/nlq_lightning/universal-ner/LLaVA-NeXT-Video-7B-DPO-uniner-extracted/version-1'
+  env_interval: 2
+  slice_interval: 10
+  search_interval: 30
+
+model:
+  object_qa: ${dataset.object_qa}

@@ -1,4 +1,5 @@
 import torch
+import random
 import torch.nn as nn
 from transformers import PreTrainedModel, AutoModelForSeq2SeqLM
 from transformers.modeling_outputs import BaseModelOutput
@@ -7,8 +8,18 @@ from model.ours.nlq_head import NLQHead
 
 
 class GroundVQA(nn.Module):
-    def __init__(self, lm_path, input_dim, freeze_word=False, max_v_len=256):
+    def __init__(self, 
+                 lm_path, 
+                 input_dim, 
+                 
+                 object_qa = False,
+                 
+                 debug = False,
+                 freeze_word=False, 
+                 max_v_len=256):
         super().__init__()
+        self.object_qa = object_qa
+        self.debug = debug
 
         if not isinstance(input_dim, int):
             input_dim = input_dim.v_dim
@@ -25,8 +36,27 @@ class GroundVQA(nn.Module):
 
         self.nlq_head = NLQHead(in_dim=lm_dim, max_v_len=max_v_len)
 
-    def forward(self, v_feat, v_mask, q_token, q_mask, gt_segments, gt_labels,
-                labels=None, **remains):
+    def forward(self, 
+                    v_feat, 
+                    v_mask, 
+                    q_token, 
+                    q_mask, 
+                    
+                    gt_segments, 
+                    gt_labels,
+                    labels=None, 
+                    
+                    # object_qa
+                    q_token_obj_pos=None,
+                    q_mask_obj_pos=None,
+                    q_token_obj_neg=None,
+                    q_mask_obj_neg=None,
+                    labels_obj_pos=None,
+                    labels_obj_neg=None,
+                    v_feat_for_obj=None,
+                    v_mask_for_obj=None,
+                    
+                    **remains):
         # encoder
         encoder_out, mask = self.forward_encoder(v_feat, v_mask, q_token, q_mask) 
         
@@ -40,7 +70,17 @@ class GroundVQA(nn.Module):
         )
         time_loss = nlq_results['final_loss'] * 1.0
 
-        # decoder
+        if self.object_qa:
+            if random.randint(0, 1) == 1 or self.debug:
+                # positive
+                encoder_out, mask = self.forward_encoder(v_feat_for_obj, v_mask_for_obj,            
+                                    q_token_obj_pos,q_mask_obj_pos)
+                labels = labels_obj_pos
+            else:
+                # negative
+                encoder_out, mask = self.forward_encoder(v_feat_for_obj, v_mask_for_obj, 
+                                    q_token_obj_neg,q_mask_obj_neg)
+                labels = labels_obj_neg
         outputs = self.lm(
             encoder_outputs=(encoder_out,),
             attention_mask=mask,
