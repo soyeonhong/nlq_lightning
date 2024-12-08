@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name object_qa
+#SBATCH --job-name object_aug
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-gpu=8
 #SBATCH --mem-per-gpu=29G
@@ -14,6 +14,11 @@ set -e  # exit on error
 
 hostname
 
+# object_qa
+# python run.py \
+#     "+experiment=object_qa"
+
+# object_aug
 python run.py \
-    "+experiment=object_qa"
+    "+experiment=object_aug"
 

@@ -14,11 +14,14 @@ class GroundVQA(nn.Module):
                  
                  object_qa = False,
                  
+                 object_aug = False,
+                 
                  debug = False,
                  freeze_word=False, 
                  max_v_len=256):
         super().__init__()
         self.object_qa = object_qa
+        self.object_aug = object_aug
         self.debug = debug
 
         if not isinstance(input_dim, int):
@@ -56,7 +59,17 @@ class GroundVQA(nn.Module):
                     v_feat_for_obj=None,
                     v_mask_for_obj=None,
                     
+                    # object_qug
+                    q_token_obj_aug=None,
+                    q_mask_obj_aug=None,
+                    
                     **remains):
+        
+        if self.object_aug:
+            num_sen = q_token_obj_aug.shape[1]
+            random_sen = random.randint(0, num_sen-1)
+            q_token = q_token_obj_aug[:, random_sen] # [B, L]
+            q_mask = q_mask_obj_aug[:, random_sen] # [B]
         # encoder
         encoder_out, mask = self.forward_encoder(v_feat, v_mask, q_token, q_mask) 
         

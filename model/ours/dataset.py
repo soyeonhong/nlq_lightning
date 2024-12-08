@@ -6,6 +6,7 @@ import json
 import random
 from pathlib import Path
 from typing import Iterable
+from einops import rearrange
 
 import h5py
 import numpy as np
@@ -17,6 +18,21 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data.dataset import Dataset
 from transformers import AutoTokenizer
 from pytorch_lightning.utilities.distributed import rank_zero_only
+
+templates = [
+    "What ccolor is {object}?", # "Objects: What X is Y?"
+    "In what location did I see {object}?", # "Objects: In what location did I see object X ?"
+    "Where is {object}?", # "Objects: Where is object X?", "Objects: Where is object X?"
+    "How many {object}?" #  "Objects: How many X’s? (quantity question)"
+]
+# "Objects: Where is object X before / after event Y?",
+# "Place: Where did I put X?",
+# "Objects: What did I put in X?",
+# "Objects: What X did I Y?",
+# "Objects: State of an object"
+# "People: Who did I talk to in location X?",
+# "People: When did I talk to or interact with person with role X?"
+# "People: Who did I interact with when I did activity X?"
 
 @rank_zero_only
 def log_data_info(train_dataset, val_dataset, test_dataset):
@@ -30,14 +46,19 @@ class BaseDataset(Dataset):
         super().__init__()
         self.split = split
         self.video_features = h5py.File(os.path.join(data_dir, feature_type + '.hdf5'), 'r')
-        self.object_qa = config.get('object_qa')
+        self.object_qa = config.get('object_qa', None)
+        self.object_aug = config.get('object_aug', None)
         
-        if self.object_qa and 'train' in self.split:
+        if (self.object_qa or self.object_aug) and 'train' in self.split:
             self.annotations = json.loads(Path(os.path.join(data_dir, f'annotations.{split}_object.json')).read_text())
             self.p_env_dir = Path(config.env_dir)
             self.env_interval = config.env_interval
-            self.slice_int = config.slice_interval
-            self.search_int = config.search_interval
+            
+            if self.object_qa:
+                self.slice_int = config.slice_interval
+                self.search_int = config.search_interval
+            elif self.object_aug:
+                self.obj_number = config.obj_number
             
             required_clip_uids = set(a['video_id'] for a in self.annotations)
             valid_clip_uids = set(video_id.stem for video_id in list(self.p_env_dir.glob('**/*.json')))
@@ -73,12 +94,13 @@ class NLQDataset(BaseDataset):
         query_id = self.annotations[index].get('sample_id')
         question = self.annotations[index]['question']
         clip_duration = self.annotations[index].get('clip_duration')
-        if self.object_qa and 'train' in self.split:
+        if (self.object_qa or self.object_aug) and 'train' in self.split:
             p_env_data = self.p_env_dir / f'{video_id}.json'
         
-        if self.object_qa and 'train' in self.split:
+        if (self.object_qa or self.object_aug) and 'train' in self.split:
             env_datas = json.loads(p_env_data.read_text())
-            ori_video_feature = torch.from_numpy(self.video_features[video_id][:])
+            if self.object_qa:
+                ori_video_feature = torch.from_numpy(self.video_features[video_id][:])
 
         video_feature, v_len, sample_ratio = self._get_video_feature(video_id)
 
@@ -116,60 +138,89 @@ class NLQDataset(BaseDataset):
             'task': 'NLQ'
         }
         
-        if self.object_qa and 'train' in self.split:
+        if (self.object_qa or self.object_aug) and 'train' in self.split:
             query_objs = self.annotations[index]['entities']['values']
             
-            # positive question
-            if len(query_objs) == 1:
-                obj_q_pos = f"Is there a {query_objs[0]}?"
-            else:
-                obj_q_pos = f"Are there {', '.join(query_objs[:-1])} and {query_objs[-1]}?"
-            q_str_pos = f"question: {obj_q_pos} video: "
-            
-            # negative question
-            time_per_v_feat = clip_duration  / v_len
-            center = (end_time + start_time) // 2
-            slice_t_s = max(0, center - self.slice_int / 2)
-            slice_t_e = min(clip_duration, center + self.slice_int / 2)
-            slice_int_idx = self.slice_int // time_per_v_feat
-            
-            if slice_t_s == 0:
-                slice_idx_s = 0
-                slice_idx_e = slice_int_idx
-            elif slice_t_e == clip_duration:
-                slice_idx_e = v_len - 1
-                slice_idx_s = slice_idx_e - slice_int_idx
-            else:
-                slice_idx_s = slice_t_s // time_per_v_feat
-                slice_idx_e = slice_idx_s + slice_int_idx
-                    
-            slice_idx_s , slice_idx_e = int(slice_idx_s), int(slice_idx_e)
-            
-            env_search_idx_s = max(0, math.floor(slice_t_s // self.env_interval) - 1 - self.search_int // 2)
-            env_search_idx_e = min(math.ceil(slice_t_e / self.env_interval) - 1 + self.search_int // 2, len(env_datas) - 1)
-            
-            obj_list = []
-            obj_gt_list = []
-            
-            for env_data in env_datas[env_search_idx_s:env_search_idx_e + 1]:
-                obj_list.extend(env_data['entities']['values'])
-                if slice_t_s <= env_data['start'] <= slice_t_e:
-                    obj_gt_list.extend(env_data['entities']['values'])
-                    
-            obj_list = list(set(obj_list) - set(obj_gt_list))
-            
-            if obj_list == []:
-                q_str_neg = q_str_pos
-            else:      
-                obj_q_neg = f"Is there a {random.choice(obj_list)}?"
-                q_str_neg = f"question: {obj_q_neg} video: "
-            
-            sample['question_obj_pos'] = q_str_pos
-            sample['question_obj_neg'] = q_str_neg
-            sample['answer_obj_pos'] = 'Yes'
-            sample['answer_obj_neg'] = 'No'
-            sample['slice'] = [slice_idx_s, slice_idx_e]
-            sample['v_feat_for_obj'] = ori_video_feature[slice_idx_s:slice_idx_e + 1]
+            if self.object_qa:
+                # positive question
+                if len(query_objs) == 1:
+                    obj_q_pos = f"Is there a {query_objs[0]}?"
+                else:
+                    obj_q_pos = f"Are there {', '.join(query_objs[:-1])} and {query_objs[-1]}?"
+                q_str_pos = f"question: {obj_q_pos} video: "
+                
+                # negative question
+                time_per_v_feat = clip_duration  / v_len
+                center = (end_time + start_time) // 2
+                slice_t_s = max(0, center - self.slice_int / 2)
+                slice_t_e = min(clip_duration, center + self.slice_int / 2)
+                slice_int_idx = self.slice_int // time_per_v_feat
+                
+                if slice_t_s == 0:
+                    slice_idx_s = 0
+                    slice_idx_e = slice_int_idx
+                elif slice_t_e == clip_duration:
+                    slice_idx_e = v_len - 1
+                    slice_idx_s = slice_idx_e - slice_int_idx
+                else:
+                    slice_idx_s = slice_t_s // time_per_v_feat
+                    slice_idx_e = slice_idx_s + slice_int_idx
+                        
+                slice_idx_s , slice_idx_e = int(slice_idx_s), int(slice_idx_e)
+                
+                env_search_idx_s = max(0, math.floor(slice_t_s // self.env_interval) - 1 - self.search_int // 2)
+                env_search_idx_e = min(math.ceil(slice_t_e / self.env_interval) - 1 + self.search_int // 2, len(env_datas) - 1)
+                
+                obj_list = []
+                obj_gt_list = []
+                
+                for env_data in env_datas[env_search_idx_s:env_search_idx_e + 1]:
+                    obj_list.extend(env_data['entities']['values'])
+                    if slice_t_s <= env_data['start'] <= slice_t_e:
+                        obj_gt_list.extend(env_data['entities']['values'])
+                        
+                obj_list = list(set(obj_list) - set(obj_gt_list))
+                
+                if obj_list == []:
+                    q_str_neg = q_str_pos
+                else:      
+                    obj_q_neg = f"Is there a {random.choice(obj_list)}?"
+                    q_str_neg = f"question: {obj_q_neg} video: "
+                
+                sample['question_obj_pos'] = q_str_pos
+                sample['question_obj_neg'] = q_str_neg
+                sample['answer_obj_pos'] = 'Yes'
+                sample['answer_obj_neg'] = 'No'
+                sample['slice'] = [slice_idx_s, slice_idx_e]
+                sample['v_feat_for_obj'] = ori_video_feature[slice_idx_s:slice_idx_e + 1]
+                
+            if self.object_aug:
+                obj_list = []
+                for env_data in env_datas:
+                    if start_time <= env_data['start'] <= end_time:
+                        obj_list.extend(env_data['entities']['values'])
+                obj_list = list(set(obj_list))
+                
+                if obj_list == [] or len(obj_list) < self.obj_number:
+                    aug_objs = obj_list
+                    if obj_list == []:
+                        for idx in range(self.obj_number):
+                            aug_objs.append(question)
+                    else:
+                        for idx in range(self.obj_number - len(obj_list)):
+                            aug_objs.append(random.choice(obj_list))
+                else:
+                    aug_objs = random.sample(obj_list, self.obj_number)
+                
+                if obj_list == []:            
+                    q_aug_strs = aug_objs
+                else:
+                    q_aug_strs = []
+                    for obj in aug_objs:
+                        for template in templates:
+                            q_str = f"question: {template.format(object=obj)} video: "
+                            q_aug_strs.append(q_str)
+                sample['question_obj_aug'] = q_aug_strs
 
         return sample
 
@@ -249,6 +300,7 @@ class JointDataset(ConcatDataset):
         self.tokenizer.pad_token = self.tokenizer.eos_token  # BUG: Set this per convenience for GPT-2
         self.object_qa = datasets[0].object_qa
         self.split = datasets[0].split
+        self.object_aug = datasets[0].object_aug
 
     def collate_fn(self, batch):
         question = [b['question'] for b in batch]
@@ -310,6 +362,23 @@ class JointDataset(ConcatDataset):
             
             result['v_feat_for_obj'] = video_feature_padded_for_obj
             result['v_mask_for_obj'] = video_mask_for_obj
+        
+        if self.object_aug and 'train' in self.split:
+            B = len(batch)
+            num_sen = len(batch[0]['question_obj_aug'])
+            question_obj_aug = []
+            
+            for b in batch:
+                question_obj_aug.extend(b['question_obj_aug']) # [B * num_sen]
+            question_obj_aug_tok = self.tokenizer(question_obj_aug, padding=True, return_tensors='pt', add_special_tokens=False) # [B * num_sen,  L]
+            
+            input_ids = question_obj_aug_tok.input_ids # [B * num_sen,  L]
+            input_ids = rearrange(input_ids, '(B num_sen) num_token -> B num_sen num_token', B=B, num_sen=num_sen) # [B, num_sen, L]
+            attention_mask = question_obj_aug_tok.attention_mask.bool() # [B * num_sen,  L]
+            attention_mask = rearrange(attention_mask, '(B num_sen) num_token -> B num_sen num_token', B=B, num_sen=num_sen) # [B, num_sen, L]
+            result['q_text_obj_aug'] = question_obj_aug
+            result['q_token_obj_aug'] = input_ids # [B, num_sen, L]
+            result['q_mask_obj_aug'] = attention_mask # [B, num_sen, L]
 
         return result
 
