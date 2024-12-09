@@ -25,50 +25,41 @@ class GroundVQA(nn.Module):
 
         self.nlq_head = NLQHead(in_dim=lm_dim, max_v_len=max_v_len)
 
-    def forward(self, v_feat, v_mask, q_token, q_mask, gt_segments, gt_labels,
-                labels=None, **remains):
-        # encoder
-        encoder_out, mask = self.forward_encoder(v_feat, v_mask, q_token, q_mask) 
-        
-        # localizer
-        encoder_out_v = encoder_out[:, -v_feat.shape[1]:]
-        nlq_results = self.nlq_head(
-            feat=encoder_out_v.permute(0, 2, 1),  # (B, D, T)
-            mask=v_mask.unsqueeze(1),  # (B, 1, T)
-            gt_segments=gt_segments,
-            gt_labels=gt_labels
-        )
-        time_loss = nlq_results['final_loss'] * 1.0
-
-        # decoder
-        outputs = self.lm(
-            encoder_outputs=(encoder_out,),
-            attention_mask=mask,
-            labels=labels,
-        )
-        lm_loss = outputs.loss
-
-        total_loss = 0.5 * time_loss + 0.5 * lm_loss
-
-        return total_loss, lm_loss, time_loss
-
-    def generate(self, v_feat, v_mask, q_token, q_mask, v_len, **remains):
+    def forward(self, v_feat, v_mask, q_token, q_mask, gt_segments=None, gt_labels=None, 
+            labels=None, v_len=None, compute_loss=False, training=True, **remains):
+        # Encoder
         encoder_out, mask = self.forward_encoder(v_feat, v_mask, q_token, q_mask)
         encoder_out_v = encoder_out[:, -v_feat.shape[1]:]
-
+        
+        # Localizer
         nlq_results = self.nlq_head(
             feat=encoder_out_v.permute(0, 2, 1),  # (B, D, T)
             mask=v_mask.unsqueeze(1),  # (B, 1, T)
-            training=False,
-            v_lens=v_len
+            gt_segments=gt_segments if training else None,
+            gt_labels=gt_labels if training else None,
+            training=training,
+            v_lens=v_len if not training else None
         )
-        answer_tokens = self.lm.generate(
-            encoder_outputs=BaseModelOutput(last_hidden_state=encoder_out),
-            attention_mask=mask,
-            max_new_tokens=32
-        )
-
-        return nlq_results, answer_tokens
+        
+        if training:
+            # Compute losses
+            time_loss = nlq_results['final_loss'] * 1.0
+            outputs = self.lm(
+                encoder_outputs=(encoder_out,),
+                attention_mask=mask,
+                labels=labels,
+            )
+            lm_loss = outputs.loss
+            total_loss = 0.5 * time_loss + 0.5 * lm_loss
+            return total_loss, lm_loss, time_loss
+        else:
+            # Generate answer tokens
+            answer_tokens = self.lm.generate(
+                encoder_outputs=BaseModelOutput(last_hidden_state=encoder_out),
+                attention_mask=mask,
+                max_new_tokens=32
+            )
+            return nlq_results, answer_tokens
 
     def forward_encoder(self, v_feat, v_mask, q_token, q_mask):
         B, L, D = v_feat.shape

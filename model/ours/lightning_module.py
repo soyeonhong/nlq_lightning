@@ -3,6 +3,7 @@ import pytorch_lightning as pl
 from hydra.utils import instantiate
 from transformers import AutoTokenizer
 from torch.optim.lr_scheduler import OneCycleLR
+from omegaconf import OmegaConf
 
 from eval import calc_metrics
 from eval_nlq import ReferringRecall
@@ -10,6 +11,8 @@ from eval_nlq import ReferringRecall
 class LightningModule(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
+        if isinstance(config, dict):  # eval.py, config from a checkpoint, for backward compatibility
+            config = OmegaConf.create(config)
         self.config = config
         self.tokenizer = AutoTokenizer.from_pretrained(config.dataset.tokenizer_path)
         self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -19,6 +22,7 @@ class LightningModule(pl.LightningModule):
             ann_dir=config.dataset.ann_dir
         )
         self._log_indices = {}
+        self.save_hyperparameters(OmegaConf.to_container(config, resolve=True))  # to save the config in the checkpoint
 
     def training_step(self, batch, batch_idx):
         torch.cuda.empty_cache()
@@ -31,7 +35,7 @@ class LightningModule(pl.LightningModule):
         }
     
     def validation_step(self, batch, batch_idx, dataloader_idx): # 0: val, 1: train
-        nlq_results, answer_tokens = self.model.generate(**batch)
+        nlq_results, answer_tokens = self.model(**batch, training=False)
         pred_answer = self.tokenizer.batch_decode(answer_tokens, skip_special_tokens=True)
         return {
             'question': batch['q_text'],

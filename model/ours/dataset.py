@@ -6,6 +6,7 @@ import json
 import random
 from pathlib import Path
 from typing import Iterable
+from omegaconf import OmegaConf
 
 import h5py
 import numpy as np
@@ -211,7 +212,9 @@ class JointDataModule(pl.LightningDataModule):
 
     def __init__(self, config):
         super().__init__()
-        self.config = config
+        self.config = config.dataset
+        
+        self.save_hyperparameters(OmegaConf.to_container(config, resolve=True))
         
     def setup(self, stage=None):
         CloseQA_weight = self.config.get('closeqa_weight', 50)

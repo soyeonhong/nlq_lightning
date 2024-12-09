@@ -50,23 +50,11 @@ def train(config: DictConfig):
     jid = os.environ.get("SLURM_JOB_ID")
     
 
-    data = JointDataModule(config.dataset)
+    data = JointDataModule(config)
     data.setup()
     model = LightningModule(config)
     
     trainer, ckpt_callback = get_trainer(config, jid, enable_progress_bar=not within_slurm_batch())
-
-    if config.checkpoint_path:
-        state_dict = torch.load(config.checkpoint_path, map_location='cpu')['state_dict']
-        if not config.load_nlq_head:
-            print('Train NLQ head from scratch')
-            state_dict = {k: v for k, v in state_dict.items() if not "nlq_head" in k}
-        if not config.load_decoder:
-            print('Train LM decoder head from scratch')
-            state_dict = {k: v for k, v in state_dict.items() if not ("decoder" in k or "lm_head" in k)}
-        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-        
-        log_checkpoint_info(config.checkpoint_path, missing_keys, unexpected_keys)
     
     log_to_console('\n' + "="*80 + '\n')
     log_to_console(OmegaConf.to_yaml(config, resolve=True))
@@ -80,19 +68,21 @@ def train(config: DictConfig):
     if config.run_type == 'eval':  # evaluation
         trainer, _ = get_trainer(config, jid, enable_progress_bar=not within_slurm_batch(),
                                  enable_checkpointing=False)
+        model = LightningModule.load_from_checkpoint(config.checkpoint_path)
         trainer.predict(
             model, [data.val_dataloader(), data.train_dataloader()],
         )
+        
     else:  # training
         trainer.fit(
             model, data.train_dataloader(), [data.val_dataloader(), data.train_dataloader()], 
         )
         
         # evaluation
-        p_ckpt = 'outputs/batch/2024-10-13/130884/epoch=105-iou=0.4454.ckpt'
+        p_ckpt = '/data/soyeonhong/nlq/nlq_lightning/outputs/debug/2024-12-09/154606/epoch=0-val_R1_03=0.000.ckpt'
         p_ckpt = p_ckpt if config.get('debug') else ckpt_callback.best_model_path
 
-        model = LightningModule(config).load_from_checkpoint(p_ckpt)
+        model = LightningModule.load_from_checkpoint(p_ckpt)
         
         trainer.predict(
             model, [data.val_dataloader(), data.train_dataloader()],
