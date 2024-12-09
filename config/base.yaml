@@ -14,8 +14,6 @@ runtime_outdir: ${runtime_outdir:}
 base_lr: 0.0001
 total_bsz: ${eval:'${dataset.batch_size} * ${oc.env:SLURM_GPUS_ON_NODE,8} * ${oc.env:SLURM_JOB_NUM_NODES,1}'}
 total_steps: ${eval:'${trainer.max_epochs} * ${dataset.num_train_samples} // ${oc.env:SLURM_GPUS_ON_NODE,8} // ${dataset.batch_size}'}
-load_nlq_head: True
-load_decoder: True
 run_type: 'Train'
 checkpoint_path: null
 

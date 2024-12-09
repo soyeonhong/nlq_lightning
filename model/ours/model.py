@@ -44,10 +44,12 @@ class GroundVQA(nn.Module):
                     v_mask, 
                     q_token, 
                     q_mask, 
+                    v_len=None,
                     
-                    gt_segments, 
-                    gt_labels,
+                    gt_segments=None, 
+                    gt_labels=None,
                     labels=None, 
+                    training=True,
                     
                     # object_qa
                     q_token_obj_pos=None,
@@ -70,58 +72,54 @@ class GroundVQA(nn.Module):
             random_sen = random.randint(0, num_sen-1)
             q_token = q_token_obj_aug[:, random_sen] # [B, L]
             q_mask = q_mask_obj_aug[:, random_sen] # [B]
+            
         # encoder
         encoder_out, mask = self.forward_encoder(v_feat, v_mask, q_token, q_mask) 
         
         # localizer
         encoder_out_v = encoder_out[:, -v_feat.shape[1]:]
+        
+        # Localizer
         nlq_results = self.nlq_head(
             feat=encoder_out_v.permute(0, 2, 1),  # (B, D, T)
             mask=v_mask.unsqueeze(1),  # (B, 1, T)
-            gt_segments=gt_segments,
-            gt_labels=gt_labels
+            gt_segments=gt_segments if training else None,
+            gt_labels=gt_labels if training else None,
+            training=training,
+            v_lens=v_len if not training else None
         )
-        time_loss = nlq_results['final_loss'] * 1.0
-
-        if self.object_qa:
-            if random.randint(0, 1) == 1 or self.debug:
-                # positive
-                encoder_out, mask = self.forward_encoder(v_feat_for_obj, v_mask_for_obj,            
-                                    q_token_obj_pos,q_mask_obj_pos)
-                labels = labels_obj_pos
-            else:
-                # negative
-                encoder_out, mask = self.forward_encoder(v_feat_for_obj, v_mask_for_obj, 
-                                    q_token_obj_neg,q_mask_obj_neg)
-                labels = labels_obj_neg
-        outputs = self.lm(
-            encoder_outputs=(encoder_out,),
-            attention_mask=mask,
-            labels=labels,
-        )
-        lm_loss = outputs.loss
-
-        total_loss = 0.5 * time_loss + 0.5 * lm_loss
-
-        return total_loss, lm_loss, time_loss
-
-    def generate(self, v_feat, v_mask, q_token, q_mask, v_len, **remains):
-        encoder_out, mask = self.forward_encoder(v_feat, v_mask, q_token, q_mask)
-        encoder_out_v = encoder_out[:, -v_feat.shape[1]:]
-
-        nlq_results = self.nlq_head(
-            feat=encoder_out_v.permute(0, 2, 1),  # (B, D, T)
-            mask=v_mask.unsqueeze(1),  # (B, 1, T)
-            training=False,
-            v_lens=v_len
-        )
-        answer_tokens = self.lm.generate(
-            encoder_outputs=BaseModelOutput(last_hidden_state=encoder_out),
-            attention_mask=mask,
-            max_new_tokens=32
-        )
-
-        return nlq_results, answer_tokens
+        
+        if training:
+            # Compute losses
+            time_loss = nlq_results['final_loss'] * 1.0
+            
+            if self.object_qa:
+                if random.randint(0, 1) == 1 or self.debug:
+                    # positive
+                    encoder_out, mask = self.forward_encoder(v_feat_for_obj, v_mask_for_obj,            
+                                        q_token_obj_pos,q_mask_obj_pos)
+                    labels = labels_obj_pos
+                else:
+                    # negative
+                    encoder_out, mask = self.forward_encoder(v_feat_for_obj, v_mask_for_obj, 
+                                        q_token_obj_neg,q_mask_obj_neg)
+                    labels = labels_obj_neg
+            outputs = self.lm(
+                encoder_outputs=(encoder_out,),
+                attention_mask=mask,
+                labels=labels,
+            )
+            lm_loss = outputs.loss
+            total_loss = 0.5 * time_loss + 0.5 * lm_loss
+            return total_loss, lm_loss, time_loss
+        else:
+            # Generate answer tokens
+            answer_tokens = self.lm.generate(
+                encoder_outputs=BaseModelOutput(last_hidden_state=encoder_out),
+                attention_mask=mask,
+                max_new_tokens=32
+            )
+            return nlq_results, answer_tokens
 
     def forward_encoder(self, v_feat, v_mask, q_token, q_mask):
         B, L, D = v_feat.shape

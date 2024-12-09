@@ -13,5 +13,4 @@
 python run.py \
     'dataset.batch_size=32' \
     'run_type=eval' \
-    'checkpoint_path="/data/soyeonhong/nlq/nlq_lightning/checkpoints/GroundVQA_B-NLQ-VLG-val_R1_03=15.5.ckpt"' \
-    'load_nlq_head=True'
+    'checkpoint_path="/data/soyeonhong/nlq/nlq_lightning/outputs/debug/2024-12-09/154606/epoch=0-val_R1_03=0.000.ckpt"'
