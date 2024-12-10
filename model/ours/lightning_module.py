@@ -26,13 +26,10 @@ class LightningModule(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         torch.cuda.empty_cache()
-        total_loss, ce_loss, time_loss = self.model(**batch)
-        self.log('total_loss', total_loss, rank_zero_only=True)
-        self.log('ce_loss', ce_loss, rank_zero_only=True)
-        self.log('time_loss', time_loss, rank_zero_only=True)
-        return {
-            'loss': total_loss,
-        }
+        output_dict = self.model(**batch)
+        log_dict = set_prefix_to_keys(output_dict['log_dict'], 'Train')
+        self.log_dict(log_dict, rank_zero_only=True)
+        return output_dict['loss']
     
     def validation_step(self, batch, batch_idx, dataloader_idx): # 0: val, 1: train
         nlq_results, answer_tokens = self.model(**batch, training=False)
@@ -120,11 +117,6 @@ class LightningModule(pl.LightningModule):
 
         return metrics
 
-    # def training_epoch_end(self, outputs):
-        # self._log_some_outputs(outputs, 'train')
-        # metrics = self.aggregate_metrics(outputs, prefix='train')
-        # self.log_dict(metrics, sync_dist=True)
-
     def validation_epoch_end(self, outputs):
         def _mean(key):
             return torch.stack([data[key] for data in outputs]).mean()
@@ -141,6 +133,7 @@ class LightningModule(pl.LightningModule):
         })
         
         metrics = {**val_metrics, **train_metrics}
+        metrics = set_prefix_to_keys(metrics, 'Val')
         self.log_dict(metrics, sync_dist=True)
 
     def configure_optimizers(self):
@@ -165,3 +158,6 @@ class LightningModule(pl.LightningModule):
             }
         else:
             return optimizer
+        
+def set_prefix_to_keys(d: dict, prefix: str) -> dict:
+    return {f'{prefix}/{k}': v for k, v in d.items()}

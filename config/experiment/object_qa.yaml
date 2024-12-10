@@ -8,6 +8,11 @@ dataset:
   env_interval: 2
   slice_interval: 10
   search_interval: 30
+  search_all: True
+  nlq_from_qa: True
 
 model:
   object_qa: ${dataset.object_qa}
+  nlq_from_qa: ${dataset.nlq_from_qa}
+  lm_weight: 0.2
+  time_weight: 0.5

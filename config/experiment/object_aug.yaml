@@ -7,6 +7,8 @@ dataset:
   env_dir: '/data/soyeonhong/nlq/nlq_lightning/universal-ner/LLaVA-NeXT-Video-7B-DPO-uniner-extracted/version-1'
   env_interval: 2
   obj_number: 5
+  from_query: False
+  jitter: 2.0
 
 model:
   object_aug: ${dataset.object_aug}

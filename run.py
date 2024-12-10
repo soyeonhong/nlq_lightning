@@ -43,7 +43,7 @@ def within_slurm_batch():
     batch_flag = int(result.stdout.strip())
     return batch_flag == 1
 
-@hydra.main(config_path='config', config_name='base')
+@hydra.main(config_path='config', config_name='base', version_base='1.3')
 def train(config: DictConfig):
     pl.seed_everything(config.trainer.random_seed, workers=True)
     default_root_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir

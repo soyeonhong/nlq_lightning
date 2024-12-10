@@ -21,19 +21,11 @@ from transformers import AutoTokenizer
 from pytorch_lightning.utilities.distributed import rank_zero_only
 
 templates = [
-    "What ccolor is {object}?", # "Objects: What X is Y?"
+    "What color is {object}?", # "Objects: What X is Y?"
     "In what location did I see {object}?", # "Objects: In what location did I see object X ?"
     "Where is {object}?", # "Objects: Where is object X?", "Objects: Where is object X?"
     "How many {object}?" #  "Objects: How many X’s? (quantity question)"
 ]
-# "Objects: Where is object X before / after event Y?",
-# "Place: Where did I put X?",
-# "Objects: What did I put in X?",
-# "Objects: What X did I Y?",
-# "Objects: State of an object"
-# "People: Who did I talk to in location X?",
-# "People: When did I talk to or interact with person with role X?"
-# "People: Who did I interact with when I did activity X?"
 
 @rank_zero_only
 def log_data_info(train_dataset, val_dataset, test_dataset):
@@ -49,6 +41,10 @@ class BaseDataset(Dataset):
         self.video_features = h5py.File(os.path.join(data_dir, feature_type + '.hdf5'), 'r')
         self.object_qa = config.get('object_qa', None)
         self.object_aug = config.get('object_aug', None)
+        self.aug_from_query = config.get('from_query', None)
+        self.jitter = config.get('jitter', None)
+        self.search_all = config.get('search_all', None)
+        self.nlq_from_qa = config.get('nlq_from_qa', None)
         
         if (self.object_qa or self.object_aug) and 'train' in self.split:
             self.annotations = json.loads(Path(os.path.join(data_dir, f'annotations.{split}_object.json')).read_text())
@@ -145,40 +141,55 @@ class NLQDataset(BaseDataset):
             if self.object_qa:
                 # positive question
                 if len(query_objs) == 1:
-                    obj_q_pos = f"Is there a {query_objs[0]}?"
+                    if query_objs[0] == '':
+                        obj_q_pos = question
+                    else:
+                        obj_q_pos = f"Is there a {query_objs[0]}?"
                 else:
                     obj_q_pos = f"Are there {', '.join(query_objs[:-1])} and {query_objs[-1]}?"
                 q_str_pos = f"question: {obj_q_pos} video: "
                 
                 # negative question
-                time_per_v_feat = clip_duration  / v_len
-                center = (end_time + start_time) // 2
-                slice_t_s = max(0, center - self.slice_int / 2)
-                slice_t_e = min(clip_duration, center + self.slice_int / 2)
-                slice_int_idx = self.slice_int // time_per_v_feat
-                
-                if slice_t_s == 0:
-                    slice_idx_s = 0
-                    slice_idx_e = slice_int_idx
-                elif slice_t_e == clip_duration:
-                    slice_idx_e = v_len - 1
-                    slice_idx_s = slice_idx_e - slice_int_idx
+                # slice time
+                if self.search_all:
+                    env_search_idx_s = 0
+                    env_search_idx_e = len(env_datas) - 1
                 else:
-                    slice_idx_s = slice_t_s // time_per_v_feat
-                    slice_idx_e = slice_idx_s + slice_int_idx
-                        
-                slice_idx_s , slice_idx_e = int(slice_idx_s), int(slice_idx_e)
+                    time_per_v_feat = clip_duration  / v_len
+                    center = (end_time + start_time) // 2
+                    slice_t_s = max(0, center - self.slice_int / 2)
+                    slice_t_e = min(clip_duration, center + self.slice_int / 2)
+                    slice_int_idx = self.slice_int // time_per_v_feat
+                    
+                    if slice_t_s == 0:
+                        slice_idx_s = 0
+                        slice_idx_e = slice_int_idx
+                    elif slice_t_e == clip_duration:
+                        slice_idx_e = v_len - 1
+                        slice_idx_s = slice_idx_e - slice_int_idx
+                    else:
+                        slice_idx_s = slice_t_s // time_per_v_feat
+                        slice_idx_e = slice_idx_s + slice_int_idx
+                            
+                    slice_idx_s , slice_idx_e = int(slice_idx_s), int(slice_idx_e)
+                    
+                    env_search_idx_s = max(0, math.floor(slice_t_s // self.env_interval) - 1 - self.search_int // 2)
+                    env_search_idx_e = min(math.ceil(slice_t_e / self.env_interval) - 1 + self.search_int // 2, len(env_datas) - 1)
                 
-                env_search_idx_s = max(0, math.floor(slice_t_s // self.env_interval) - 1 - self.search_int // 2)
-                env_search_idx_e = min(math.ceil(slice_t_e / self.env_interval) - 1 + self.search_int // 2, len(env_datas) - 1)
-                
+                # select negative object
                 obj_list = []
                 obj_gt_list = []
                 
-                for env_data in env_datas[env_search_idx_s:env_search_idx_e + 1]:
-                    obj_list.extend(env_data['entities']['values'])
-                    if slice_t_s <= env_data['start'] <= slice_t_e:
-                        obj_gt_list.extend(env_data['entities']['values'])
+                if self.search_all:
+                    for env_data in env_datas[env_search_idx_s:env_search_idx_e + 1]:
+                        obj_list.extend(env_data['entities']['values'])
+                        if start_time <= env_data['start'] <= end_time:
+                            obj_gt_list.extend(env_data['entities']['values'])
+                else:
+                    for env_data in env_datas[env_search_idx_s:env_search_idx_e + 1]:
+                        obj_list.extend(env_data['entities']['values'])
+                        if slice_t_s <= env_data['start'] <= slice_t_e:
+                            obj_gt_list.extend(env_data['entities']['values'])
                         
                 obj_list = list(set(obj_list) - set(obj_gt_list))
                 
@@ -192,40 +203,158 @@ class NLQDataset(BaseDataset):
                 sample['question_obj_neg'] = q_str_neg
                 sample['answer_obj_pos'] = 'Yes'
                 sample['answer_obj_neg'] = 'No'
-                sample['slice'] = [slice_idx_s, slice_idx_e]
-                sample['v_feat_for_obj'] = ori_video_feature[slice_idx_s:slice_idx_e + 1]
+                if not self.nlq_from_qa:
+                    sample['slice'] = [slice_idx_s, slice_idx_e]
+                    sample['v_feat_for_obj'] = ori_video_feature[slice_idx_s:slice_idx_e + 1]
                 
             if self.object_aug:
-                obj_list = []
-                for env_data in env_datas:
-                    if start_time <= env_data['start'] <= end_time:
-                        obj_list.extend(env_data['entities']['values'])
-                obj_list = list(set(obj_list))
-                
-                if obj_list == [] or len(obj_list) < self.obj_number:
-                    aug_objs = obj_list
-                    if obj_list == []:
-                        for idx in range(self.obj_number):
-                            aug_objs.append(question)
+                q_aug_strs = []
+                if self.aug_from_query:
+                    if query_objs[0] == '':
+                        q_aug_strs = [question for idx in range(len(templates))]
                     else:
-                        for idx in range(self.obj_number - len(obj_list)):
-                            aug_objs.append(random.choice(obj_list))
-                else:
-                    aug_objs = random.sample(obj_list, self.obj_number)
-                
-                if obj_list == []:            
-                    q_aug_strs = aug_objs
-                else:
-                    q_aug_strs = []
-                    for obj in aug_objs:
                         for template in templates:
-                            q_str = f"question: {template.format(object=obj)} video: "
+                            q_str = f"question: {template.format(object=query_objs[0])} video: "
                             q_aug_strs.append(q_str)
+                    # jitter
+                    s_t_jit = max(0, start_time - self.jitter)
+                    e_t_jit = min(clip_duration, end_time + self.jitter)
+                    seg_jit = torch.tensor([[s_t_jit, e_t_jit]]) * 30 / 16.043 * sample_ratio
+                    labels_jit = torch.zeros(len(seg_jit), dtype=torch.int64)
+                    one_hot_labels_jit = F.one_hot(labels_jit, 1)
+                    
+                    sample['segments_jit'] = seg_jit
+                    sample['one_hot_labels_jit'] = one_hot_labels_jit
+
+                else:
+                    obj_list = []
+                    for env_data in env_datas:
+                        if start_time <= env_data['start'] <= end_time:
+                            obj_list.extend(env_data['entities']['values'])
+                    obj_list = list(set(obj_list))
+                    
+                    if obj_list == [] or len(obj_list) < self.obj_number:
+                        aug_objs = obj_list
+                        if obj_list == []:
+                            for idx in range(self.obj_number):
+                                aug_objs.append(question)
+                        else:
+                            for idx in range(self.obj_number - len(obj_list)):
+                                aug_objs.append(random.choice(obj_list))
+                    else:
+                        aug_objs = random.sample(obj_list, self.obj_number)
+                    
+                    if obj_list == []:            
+                        q_aug_strs = aug_objs
+                    else:
+                        q_aug_strs = []
+                        for obj in aug_objs:
+                            for template in templates:
+                                q_str = f"question: {template.format(object=obj)} video: "
+                                q_aug_strs.append(q_str)
+                                
                 sample['question_obj_aug'] = q_aug_strs
 
         return sample
 
+class JointDataset(ConcatDataset):
+    def __init__(self, datasets: Iterable[Dataset], tokenizer_path) -> None:
+        super().__init__(datasets)
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, 
+                                                       local_files_only=True)
+        self.tokenizer.pad_token = self.tokenizer.eos_token  # BUG: Set this per convenience for GPT-2
+        self.object_qa = datasets[0].object_qa
+        self.split = datasets[0].split
+        self.object_aug = datasets[0].object_aug
+        self.aug_from_query = datasets[0].aug_from_query
+        self.search_all = datasets[0].search_all
 
+    def collate_fn(self, batch):
+        question = [b['question'] for b in batch]
+        question_tok = self.tokenizer(question, padding=True, return_tensors='pt', add_special_tokens=False)
+        
+        answer = [b['answer'] for b in batch]
+        labels = self.tokenizer(answer, padding=True, return_tensors='pt').input_ids
+        # NOTE: NLQ data does not have an answer
+        for idx, a in enumerate(answer):
+            if a == 'None':
+                labels[idx] = torch.ones_like(labels[idx]) * -100
+
+        video_feature = [b['v_feat'] for b in batch]
+        video_feature_padded = pad_sequence(video_feature, batch_first=True)
+        video_mask = pad_sequence([torch.ones(len(v)) for v in video_feature], batch_first=True).bool()
+
+        result = {
+            'video_id': [b['video_id'] for b in batch],
+            'q_text': question,
+            'q_token': question_tok.input_ids,
+            'q_mask': question_tok.attention_mask.bool(),
+            'v_feat': video_feature_padded,
+            'v_mask': video_mask,
+            'v_len': np.asarray([b['v_len'] for b in batch], dtype=np.long),
+            'gt_segments': torch.stack([b['segments'] for b in batch]),
+            'gt_labels': torch.stack([b['one_hot_labels'] for b in batch]),
+            'query_id': [b['query_id'] for b in batch],
+            'sample_ratio': [b['sample_ratio'] for b in batch],
+            'a_text': answer,
+            'labels': labels,
+            'task': [b['task'] for b in batch]
+        }
+        
+        if self.object_qa and 'train' in self.split:
+            question_obj_pos = [b['question_obj_pos'] for b in batch]
+            question_obj_neg = [b['question_obj_neg'] for b in batch]
+            question_obj_pos_tok = self.tokenizer(question_obj_pos, padding=True, return_tensors='pt', add_special_tokens=False)
+            question_obj_neg_tok = self.tokenizer(question_obj_neg, padding=True, return_tensors='pt', add_special_tokens=False)
+            
+            answer_obj_pos = [b['answer_obj_pos'] for b in batch]
+            answer_obj_neg = [b['answer_obj_neg'] for b in batch]
+            
+            labels_obj_pos = self.tokenizer(answer_obj_pos, padding=True, return_tensors='pt').input_ids
+            labels_obj_neg = self.tokenizer(answer_obj_neg, padding=True, return_tensors='pt').input_ids
+            
+            result['q_text_obj_pos'] = question_obj_pos
+            result['q_token_obj_pos'] = question_obj_pos_tok.input_ids
+            result['q_mask_obj_pos'] = question_obj_pos_tok.attention_mask.bool()
+            result['q_text_obj_neg'] = question_obj_neg
+            result['q_token_obj_neg'] = question_obj_neg_tok.input_ids
+            result['q_mask_obj_neg'] = question_obj_neg_tok.attention_mask.bool()
+            result['labels_obj_pos'] = labels_obj_pos
+            result['labels_obj_neg'] = labels_obj_neg
+            
+            if not self.search_all:
+                result['slice'] = torch.stack([torch.tensor(b['slice']) for b in batch])
+                
+                video_feature_for_obj = [b['v_feat_for_obj'] for b in batch]
+                video_feature_padded_for_obj = pad_sequence(video_feature_for_obj, batch_first=True)
+                video_mask_for_obj = pad_sequence([torch.ones(len(v)) for v in video_feature_for_obj], batch_first=True).bool()
+                
+                result['v_feat_for_obj'] = video_feature_padded_for_obj
+                result['v_mask_for_obj'] = video_mask_for_obj
+        
+        if self.object_aug and 'train' in self.split:
+            B = len(batch)
+            num_sen = len(batch[0]['question_obj_aug'])
+            question_obj_aug = []
+            
+            for b in batch:
+                question_obj_aug.extend(b['question_obj_aug']) # [B * num_sen]
+            question_obj_aug_tok = self.tokenizer(question_obj_aug, padding=True, return_tensors='pt', add_special_tokens=False) # [B * num_sen,  L]
+            
+            input_ids = question_obj_aug_tok.input_ids # [B * num_sen,  L]
+            input_ids = rearrange(input_ids, '(B num_sen) L -> B num_sen L', B=B, num_sen=num_sen) # [B, num_sen, L]
+            attention_mask = question_obj_aug_tok.attention_mask.bool() # [B * num_sen,  L]
+            attention_mask = rearrange(attention_mask, '(B num_sen) L -> B num_sen L', B=B, num_sen=num_sen) # [B, num_sen, L]
+            result['q_text_obj_aug'] = question_obj_aug
+            result['q_token_obj_aug'] = input_ids # [B, num_sen, L]
+            result['q_mask_obj_aug'] = attention_mask # [B, num_sen, L]
+            
+            if self.aug_from_query:
+                result['gt_segments_jit'] = torch.stack([b['segments_jit'] for b in batch])
+                result['gt_labels_jit'] = torch.stack([b['one_hot_labels_jit'] for b in batch])
+
+        return result
+    
 class QADataset(BaseDataset):
     def __init__(self, data_dir, split, feature_type, max_v_len, qa_type, CloseQA_weight=50):
         super().__init__(data_dir, split, feature_type, max_v_len)
@@ -291,97 +420,6 @@ class QADataset(BaseDataset):
             'sample_ratio': sample_ratio,
             'task': qa_type
         }
-
-
-class JointDataset(ConcatDataset):
-    def __init__(self, datasets: Iterable[Dataset], tokenizer_path) -> None:
-        super().__init__(datasets)
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, 
-                                                       local_files_only=True)
-        self.tokenizer.pad_token = self.tokenizer.eos_token  # BUG: Set this per convenience for GPT-2
-        self.object_qa = datasets[0].object_qa
-        self.split = datasets[0].split
-        self.object_aug = datasets[0].object_aug
-
-    def collate_fn(self, batch):
-        question = [b['question'] for b in batch]
-        question_tok = self.tokenizer(question, padding=True, return_tensors='pt', add_special_tokens=False)
-        
-        answer = [b['answer'] for b in batch]
-        labels = self.tokenizer(answer, padding=True, return_tensors='pt').input_ids
-        # NOTE: NLQ data does not have an answer
-        for idx, a in enumerate(answer):
-            if a == 'None':
-                labels[idx] = torch.ones_like(labels[idx]) * -100
-
-        video_feature = [b['v_feat'] for b in batch]
-        video_feature_padded = pad_sequence(video_feature, batch_first=True)
-        video_mask = pad_sequence([torch.ones(len(v)) for v in video_feature], batch_first=True).bool()
-
-        result = {
-            'video_id': [b['video_id'] for b in batch],
-            'q_text': question,
-            'q_token': question_tok.input_ids,
-            'q_mask': question_tok.attention_mask.bool(),
-            'v_feat': video_feature_padded,
-            'v_mask': video_mask,
-            'v_len': np.asarray([b['v_len'] for b in batch], dtype=np.long),
-            'gt_segments': torch.stack([b['segments'] for b in batch]),
-            'gt_labels': torch.stack([b['one_hot_labels'] for b in batch]),
-            'query_id': [b['query_id'] for b in batch],
-            'sample_ratio': [b['sample_ratio'] for b in batch],
-            'a_text': answer,
-            'labels': labels,
-            'task': [b['task'] for b in batch]
-        }
-        
-        if self.object_qa and 'train' in self.split:
-            question_obj_pos = [b['question_obj_pos'] for b in batch]
-            question_obj_neg = [b['question_obj_neg'] for b in batch]
-            question_obj_pos_tok = self.tokenizer(question_obj_pos, padding=True, return_tensors='pt', add_special_tokens=False)
-            question_obj_neg_tok = self.tokenizer(question_obj_neg, padding=True, return_tensors='pt', add_special_tokens=False)
-            
-            answer_obj_pos = [b['answer_obj_pos'] for b in batch]
-            answer_obj_neg = [b['answer_obj_neg'] for b in batch]
-            
-            labels_obj_pos = self.tokenizer(answer_obj_pos, padding=True, return_tensors='pt').input_ids
-            labels_obj_neg = self.tokenizer(answer_obj_neg, padding=True, return_tensors='pt').input_ids
-            
-            result['q_text_obj_pos'] = question_obj_pos
-            result['q_token_obj_pos'] = question_obj_pos_tok.input_ids
-            result['q_mask_obj_pos'] = question_obj_pos_tok.attention_mask.bool()
-            result['q_text_obj_neg'] = question_obj_neg
-            result['q_token_obj_neg'] = question_obj_neg_tok.input_ids
-            result['q_mask_obj_neg'] = question_obj_neg_tok.attention_mask.bool()
-            result['labels_obj_pos'] = labels_obj_pos
-            result['labels_obj_neg'] = labels_obj_neg
-            result['slice'] = torch.stack([torch.tensor(b['slice']) for b in batch])
-            
-            video_feature_for_obj = [b['v_feat_for_obj'] for b in batch]
-            video_feature_padded_for_obj = pad_sequence(video_feature_for_obj, batch_first=True)
-            video_mask_for_obj = pad_sequence([torch.ones(len(v)) for v in video_feature_for_obj], batch_first=True).bool()
-            
-            result['v_feat_for_obj'] = video_feature_padded_for_obj
-            result['v_mask_for_obj'] = video_mask_for_obj
-        
-        if self.object_aug and 'train' in self.split:
-            B = len(batch)
-            num_sen = len(batch[0]['question_obj_aug'])
-            question_obj_aug = []
-            
-            for b in batch:
-                question_obj_aug.extend(b['question_obj_aug']) # [B * num_sen]
-            question_obj_aug_tok = self.tokenizer(question_obj_aug, padding=True, return_tensors='pt', add_special_tokens=False) # [B * num_sen,  L]
-            
-            input_ids = question_obj_aug_tok.input_ids # [B * num_sen,  L]
-            input_ids = rearrange(input_ids, '(B num_sen) num_token -> B num_sen num_token', B=B, num_sen=num_sen) # [B, num_sen, L]
-            attention_mask = question_obj_aug_tok.attention_mask.bool() # [B * num_sen,  L]
-            attention_mask = rearrange(attention_mask, '(B num_sen) num_token -> B num_sen num_token', B=B, num_sen=num_sen) # [B, num_sen, L]
-            result['q_text_obj_aug'] = question_obj_aug
-            result['q_token_obj_aug'] = input_ids # [B, num_sen, L]
-            result['q_mask_obj_aug'] = attention_mask # [B, num_sen, L]
-
-        return result
 
 
 class JointDataModule(pl.LightningDataModule):
