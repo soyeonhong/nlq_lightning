@@ -178,3 +178,6 @@ llava-v1.6-34b
 universal-ner
 notebooks/tmp.ipynb
 notebooks/tmp.ipynb
+config/base_jh.yaml
+scripts/ttrain.sbatch
+scripts/eeval.sbatch
