@@ -32,7 +32,6 @@ class BaseDataset(Dataset):
         self.split = split
         self.video_features = h5py.File(os.path.join(data_dir, feature_type + '.hdf5'), 'r')
         self.annotations = json.loads(Path(os.path.join(data_dir, f'annotations.{split}.json')).read_text())
-        self.annotations = self.annotations[:50]
         self.max_v_len = max_v_len
         print(f'{split} set: {len(self.annotations)}')
     
