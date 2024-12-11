@@ -35,7 +35,7 @@ class BaseDataset(Dataset):
         
         self.max_v_len = max_v_len
         
-        if (self.object_qa or self.object_aug) and 'train' in self.split:
+        if self.use_llava and 'train' in self.split:
             self.annotations = json.loads(Path(os.path.join(data_dir, f'annotations.{split}_object.json')).read_text())
             self.p_env_dir = Path(config.env_dir)
             self.env_interval = config.env_interval
@@ -95,8 +95,8 @@ class NLQDataset(BaseDataset):
         segments = torch.tensor([[start_time, end_time]]) * 30 / 16.043 * sample_ratio
         labels = torch.zeros(len(segments), dtype=torch.int64)
         one_hot_labels = F.one_hot(labels, 1)  # (1, 1)
-
-        return {
+        
+        sample = {
             'video_id': video_id,
             'question': f"question: {question} video: ",
             'answer': 'None',
@@ -108,6 +108,8 @@ class NLQDataset(BaseDataset):
             'sample_ratio': sample_ratio,
             'task': 'NLQ'
         }
+
+        return 
 
 
 class QADataset(BaseDataset):
