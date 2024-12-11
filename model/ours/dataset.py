@@ -27,7 +27,7 @@ def log_data_info(train_dataset, val_dataset, test_dataset):
 
 
 class BaseDataset(Dataset):
-    def __init__(self, data_dir, split, feature_type, max_v_len):
+    def __init__(self, config, data_dir, split, feature_type, max_v_len):
         super().__init__()
         self.split = split
         self.video_features = h5py.File(os.path.join(data_dir, feature_type + '.hdf5'), 'r')
@@ -218,11 +218,9 @@ class JointDataModule(pl.LightningDataModule):
         
     def setup(self, stage=None):
         CloseQA_weight = self.config.get('closeqa_weight', 50)
-        self.train_dataset = JointDataset([
-                QADataset(self.config.data_dir, train_split, self.config.feature_type, self.config.max_v_len, 'Mixed', CloseQA_weight)
-                for train_split in self.config.qa_train_splits
-            ] + [
-                NLQDataset(self.config.data_dir, train_split, self.config.feature_type, self.config.max_v_len)
+        self.train_dataset = JointDataset(                         
+            [
+                NLQDataset(self.config, self.config.data_dir, train_split, self.config.feature_type, self.config.max_v_len)
                 for train_split in self.config.nlq_train_splits
             ],
             self.config.tokenizer_path
@@ -231,11 +229,11 @@ class JointDataModule(pl.LightningDataModule):
         test_datasets = []
         for split in self.config.test_splits:
             if split == 'QaEgo4D_test':
-                test_datasets.append(QADataset(self.config.data_dir, split, self.config.feature_type, self.config.max_v_len, 'OpenQA'))
+                test_datasets.append(QADataset(self.config, self.config.data_dir, split, self.config.feature_type, self.config.max_v_len, 'OpenQA'))
             elif split == 'QaEgo4D_test_close':
-                test_datasets.append(QADataset(self.config.data_dir, split, self.config.feature_type, self.config.max_v_len, 'CloseQA'))
+                test_datasets.append(QADataset(self.config, self.config.data_dir, split, self.config.feature_type, self.config.max_v_len, 'CloseQA'))
             elif split in ['NLQ_val', 'NLQ_test_unannotated']:
-                test_datasets.append(NLQDataset(self.config.data_dir, split, self.config.feature_type, self.config.max_v_len))
+                test_datasets.append(NLQDataset(self.config, self.config.data_dir, split, self.config.feature_type, self.config.max_v_len))
             else:
                 print(split)
                 raise NotImplementedError
