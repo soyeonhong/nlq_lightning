@@ -27,12 +27,26 @@ def log_data_info(train_dataset, val_dataset, test_dataset):
 
 
 class BaseDataset(Dataset):
-    def __init__(self, data_dir, split, feature_type, max_v_len):
+    def __init__(self, config, data_dir, split, feature_type, max_v_len):
         super().__init__()
         self.split = split
         self.video_features = h5py.File(os.path.join(data_dir, feature_type + '.hdf5'), 'r')
-        self.annotations = json.loads(Path(os.path.join(data_dir, f'annotations.{split}.json')).read_text())
+        self.use_llava = config.get('use_llava', False)
+        
         self.max_v_len = max_v_len
+        
+        if (self.object_qa or self.object_aug) and 'train' in self.split:
+            self.annotations = json.loads(Path(os.path.join(data_dir, f'annotations.{split}_object.json')).read_text())
+            self.p_env_dir = Path(config.env_dir)
+            self.env_interval = config.env_interval
+            
+            required_clip_uids = set(a['video_id'] for a in self.annotations)
+            valid_clip_uids = set(video_id.stem for video_id in list(self.p_env_dir.glob('**/*.json')))
+            diff = required_clip_uids - valid_clip_uids
+            print(f'Clips not existing in LLaVA: {diff} ({len(diff)})')
+            self.annotations = [a for a in self.annotations if a['video_id'] in valid_clip_uids]
+        else:
+            self.annotations = json.loads(Path(os.path.join(data_dir, f'annotations.{split}.json')).read_text())
         print(f'{split} set: {len(self.annotations)}')
     
     def __len__(self):

@@ -1,0 +1,13 @@
+# @package _global_
+
+# usage: python run.py +experiment=object_mask
+
+dataset:
+  use_llava: True
+  env_dir: '/data/soyeonhong/nlq/nlq_lightning/universal-ner/LLaVA-NeXT-Video-7B-DPO-uniner-extracted/version-1'
+  env_interval: 2
+  obj_number: 5
+
+model:
+  use_egovlp: True
+  egovlp_path: '/data/soyeonhong/nlq/nlq_lightning/data/egovlp-config-removed.pth'
