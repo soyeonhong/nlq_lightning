@@ -18,6 +18,7 @@ class GroundVQA(nn.Module):
                  time_weight = 0.5,
                  
                  object_aug = False,
+                 epoch_thr = None,
                  
                  debug = False,
                  freeze_word=False, 
@@ -27,6 +28,7 @@ class GroundVQA(nn.Module):
         self.nlq_from_qa = nlq_from_qa
         self.lm_weight = lm_weight
         self.time_weight = time_weight
+        self.epoch_thr = epoch_thr
         
         self.object_aug = object_aug
         self.debug = debug
@@ -75,10 +77,11 @@ class GroundVQA(nn.Module):
                     q_mask_obj_aug=None,
                     gt_segments_jit=None,
                     gt_labels_jit=None,
+                    epoch=None,
                     
                     **remains):
         
-        if self.object_aug and training:
+        if self.object_aug and training and epoch >= self.epoch_thr: 
             if random.randint(0, 1) == 1: # change query from augmented queries
                 
                 num_sen = q_token_obj_aug.shape[1]

@@ -26,7 +26,7 @@ class LightningModule(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         torch.cuda.empty_cache()
-        output_dict = self.model(**batch)
+        output_dict = self.model(**batch, epoch=self.current_epoch)
         log_dict = set_prefix_to_keys(output_dict['log_dict'], 'Train')
         self.log_dict(log_dict, rank_zero_only=True)
         return output_dict['loss']

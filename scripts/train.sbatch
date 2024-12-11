@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name object_qa
+#SBATCH --job-name object_aug_epoch_thr
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-gpu=8
 #SBATCH --mem-per-gpu=29G
@@ -15,12 +15,13 @@ set -e  # exit on error
 hostname
 
 # object_qa
-python run.py \
-    "+experiment=object_qa" \
-    "dataset.batch_size=3"
+# python run.py \
+#     "+experiment=object_qa" \
+#     "dataset.batch_size=3"
 
 # object_aug
-# python run.py \
-#     "+experiment=object_aug" \
-#     "dataset.from_query=True"
+python run.py \
+    "+experiment=object_aug" \
+    "dataset.from_query=True" \
+    "model.epoch_thr=15"
 

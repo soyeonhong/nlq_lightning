@@ -12,3 +12,4 @@ dataset:
 
 model:
   object_aug: ${dataset.object_aug}
+  epoch_thr: 0
