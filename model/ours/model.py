@@ -42,6 +42,7 @@ class GroundVQA(nn.Module):
         )
         
         if training:
+            output_dict = {}
             # Compute losses
             time_loss = nlq_results['final_loss'] * 1.0
             outputs = self.lm(
@@ -50,8 +51,18 @@ class GroundVQA(nn.Module):
                 labels=labels,
             )
             lm_loss = outputs.loss
+            log_dict = {
+                'time_loss': time_loss.detach(),
+                'lm_loss': lm_loss.detach()
+            }
+            
             total_loss = 0.5 * time_loss + 0.5 * lm_loss
-            return total_loss, lm_loss, time_loss
+            
+            log_dict.update({'total_loss': total_loss.detach()})
+            output_dict.update({'loss': total_loss})
+            output_dict.update({'log_dict': log_dict})
+            
+            return output_dict
         else:
             # Generate answer tokens
             answer_tokens = self.lm.generate(
