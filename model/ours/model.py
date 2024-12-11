@@ -137,49 +137,8 @@ class GroundVQA(nn.Module):
                 output_attentions=False
             )
             lm_loss = outputs.loss
-            
-            log_dict = {
-                'time_loss': time_loss.detach(),
-                'lm_loss': lm_loss.detach()
-            }
-            
-            if self.nlq_from_qa:
-                torch.cuda.empty_cache()
-                lm_logits = outputs.logits # [B, L, V]
-                probs = torch.softmax(lm_logits, dim=-1) # [B, L, V]
-                pred_tokens = torch.argmax(probs, dim=-1) # [B, L]
-                qa_mask = torch.all(labels == pred_tokens, dim=1) # [B]
-                qa_mask = torch.nonzero(qa_mask)
-                
-                if not qa_mask.shape[0] == 0:
-                    encoder_out_v = encoder_out[:, -v_feat.shape[1]:]
-                    
-                    selected_encoder_out_v = encoder_out_v[qa_mask].squeeze(1)
-                    selected_v_mask = v_mask[qa_mask].squeeze(1)
-                    selected_gt_segments = gt_segments[qa_mask].squeeze(1)
-                    selected_gt_labels = gt_labels[qa_mask].squeeze(1)
-
-                    nlq_results = self.nlq_head(
-                        feat=selected_encoder_out_v.permute(0, 2, 1),  # (B, D, T)
-                        mask=selected_v_mask.unsqueeze(1),  # (B, 1, T)
-                        gt_segments=selected_gt_segments if training else None,
-                        gt_labels=selected_gt_labels if training else None,
-                        training=training,
-                        v_lens=v_len if not training else None,
-                    )
-                    time_loss2 = nlq_results['final_loss']
-                else:
-                    time_loss2 = 0.0
-                
-                total_loss = 0.5 * time_loss + self.time_weight * time_loss2 + self.lm_weight * lm_loss
-                log_dict['time_loss2'] = time_loss2
-            else:
-                total_loss = 0.5 * time_loss + 0.5 * lm_loss
-            
-            log_dict.update({'total_loss': total_loss.detach()})
-            output_dict.update({'loss': total_loss})
-            output_dict.update({'log_dict': log_dict})
-            return output_dict
+            total_loss = 0.5 * time_loss + 0.5 * lm_loss
+            return total_loss, lm_loss, time_loss
         else:
             # Generate answer tokens
             answer_tokens = self.lm.generate(
