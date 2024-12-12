@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name gvqa_reproduce_nlq_lit
+#SBATCH --job-name gvqa_obj_mask
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-gpu=8
 #SBATCH --mem-per-gpu=29G
@@ -14,5 +14,7 @@ set -e  # exit on error
 
 hostname
 
-python run.py
+python run.py \
+    "+experiment=object_mask" \
+    "model.use_sim=True"
 

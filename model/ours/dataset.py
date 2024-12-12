@@ -31,11 +31,11 @@ class BaseDataset(Dataset):
         super().__init__()
         self.split = split
         self.video_features = h5py.File(os.path.join(data_dir, feature_type + '.hdf5'), 'r')
-        self.use_llava = config.get('use_llava', False)
+        self.use_egovlp = config.get('use_egovlp', False)
         
         self.max_v_len = max_v_len
         
-        if self.use_llava and 'train' in self.split:
+        if self.use_egovlp:
             self.annotations = json.loads(Path(os.path.join(data_dir, f'annotations.{split}_object.json')).read_text())
             self.p_env_dir = Path(config.env_dir)
             self.env_interval = config.env_interval
@@ -45,6 +45,10 @@ class BaseDataset(Dataset):
             diff = required_clip_uids - valid_clip_uids
             print(f'Clips not existing in LLaVA: {diff} ({len(diff)})')
             self.annotations = [a for a in self.annotations if a['video_id'] in valid_clip_uids]
+            
+            self.max_obj_in_cap = config.get('max_obj_in_cap', None)
+            self.max_cap_len = config.get('max_cap_len', None)
+
         else:
             self.annotations = json.loads(Path(os.path.join(data_dir, f'annotations.{split}.json')).read_text())
         print(f'{split} set: {len(self.annotations)}')
@@ -65,13 +69,16 @@ class BaseDataset(Dataset):
 
 
 class NLQDataset(BaseDataset):
-    def __init__(self, data_dir, split, feature_type, max_v_len):
-        super().__init__(data_dir, split, feature_type, max_v_len)
+    def __init__(self, config, data_dir, split, feature_type, max_v_len):
+        super().__init__(config, data_dir, split, feature_type, max_v_len)
 
     def __getitem__(self, index):
         video_id = self.annotations[index]['video_id']
         query_id = self.annotations[index].get('sample_id')
         question = self.annotations[index]['question']
+        if self.use_egovlp:
+            p_env_data = self.p_env_dir / f'{video_id}.json'
+            env_datas = json.loads(p_env_data.read_text())
 
         video_feature, v_len, sample_ratio = self._get_video_feature(video_id)
 
@@ -108,8 +115,49 @@ class NLQDataset(BaseDataset):
             'sample_ratio': sample_ratio,
             'task': 'NLQ'
         }
+        
+        if self.use_egovlp:
+            q_objs = self.annotations[index]['entities']['values']
+            
+            if q_objs[0] == '':
+                q_objs = question
+                
+            obj_list = []
+            
+            for env_data in env_datas:
+                obj_list.append(env_data['entities']['values'])
+            
+            # for caption length
+            if len(obj_list) < self.max_cap_len:
+                obj_list.extend([['']] * (self.max_cap_len - len(obj_list)))
+            elif len(obj_list) > self.max_cap_len:
+                # uniform sampling
+                sample_idx = torch.linspace(0, len(obj_list)-1, self.max_cap_len).long()
+                obj_list = [obj_list[i] for i in sample_idx]
+            
+            assert len(obj_list) == self.max_cap_len, f"obj_list length is not equal to max_cap_len, {video_id}"
+                
+            # for obj length in caption
+            for obj in obj_list:
+                if len(obj) < self.max_obj_in_cap:
+                    obj.extend([''] * (self.max_obj_in_cap - len(obj)))
+                elif len(obj) > self.max_obj_in_cap:
+                    # uniform sampling
+                    sample_idx = torch.linspace(0, len(obj)-1, self.max_obj_in_cap).long()
+                    obj = [obj[i] for i in sample_idx]
 
-        return 
+            if len(q_objs) != 1:
+                q_objs = [q_objs[0]]
+                    
+            obj_list_extend = []
+            for obj in obj_list:
+                obj_list_extend.extend(obj)
+            
+            sample.update({
+                'q_obj': q_objs,
+                'obj_list': obj_list_extend, # [self.max_cap_len * self.max_obj_in_cap]
+            })
+        return sample
 
 
 class QADataset(BaseDataset):
@@ -185,6 +233,14 @@ class JointDataset(ConcatDataset):
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, 
                                                        local_files_only=True)
         self.tokenizer.pad_token = self.tokenizer.eos_token  # BUG: Set this per convenience for GPT-2
+        self.use_egovlp = datasets[0].use_egovlp
+        self.split = datasets[0].split
+            
+        if self.use_egovlp:
+            self.egovlp_toknizer = AutoTokenizer.from_pretrained('distilbert-base-uncased', local_files_only=True)
+
+            self.max_obj_in_cap = datasets[0].max_obj_in_cap
+            self.max_cap_len = datasets[0].max_cap_len
 
     def collate_fn(self, batch):
         question = [b['question'] for b in batch]
@@ -217,6 +273,31 @@ class JointDataset(ConcatDataset):
             'labels': labels,
             'task': [b['task'] for b in batch]
         }
+        
+        if self.use_egovlp:
+            B = len(batch)
+            obj_list = [] # [B, self.max_cap_len * self.max_obj_in_cap]
+            q_obj = [] # [B]
+            
+            for b in batch:
+                for obj in b['obj_list']:
+                    obj_list.append(obj)
+                for obj in b['q_obj']:
+                    q_obj.append(obj)
+
+            obj_list_tok = self.egovlp_toknizer(obj_list, padding=True, return_tensors='pt', add_special_tokens=False)
+            # obj_list_token = obj_list_tok.input_ids.reshape(B, self.max_cap_len, self.max_obj_in_cap, -1) # [B, self.max_cap_len, self.max_obj_in_cap, L]
+            # obj_list_mask = obj_list_tok.attention_mask.reshape(B, self.max_cap_len, self.max_obj_in_cap, -1).bool()
+            q_obj_tok = self.egovlp_toknizer(q_obj, padding=True, return_tensors='pt', add_special_tokens=False)
+            # q_obj_token = q_obj_tok.input_ids.reshape(B, self.max_obj_in_query, -1) # [B, self.max_obj_in_query, L]
+            # q_obj_mask = q_obj_tok.attention_mask.reshape(B, self.max_obj_in_query, -1).bool()
+            
+            result.update({
+                'obj_list_token': obj_list_tok, # [B * self.max_cap_len * self.max_obj_in_cap, L]
+                # 'obj_list_mask': obj_list_mask,
+                'q_obj_token': q_obj_tok,
+                # 'q_obj_mask': q_obj_mask
+            })
 
         return result
 
