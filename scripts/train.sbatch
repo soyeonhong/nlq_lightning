@@ -15,13 +15,13 @@ set -e  # exit on error
 hostname
 
 # object_qa
-# python run.py \
-#     "+experiment=object_qa" \
-#     "dataset.batch_size=3"
+python run.py \
+    "+experiment=object_qa" \
+    "dataset.batch_size=3"
 
 # object_aug
-python run.py \
-    "+experiment=object_aug" \
-    "dataset.from_query=True" \
-    "model.epoch_thr=15"
+# python run.py \
+#     "+experiment=object_aug" \
+#     "dataset.from_query=True" \
+#     "model.epoch_thr=15"
 

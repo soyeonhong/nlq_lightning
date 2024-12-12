@@ -84,20 +84,18 @@ class GroundVQA(nn.Module):
         if self.object_aug and training and epoch >= self.epoch_thr: 
             if random.randint(0, 1) == 1: # change query from augmented queries
                 
-                num_sen = q_token_obj_aug.shape[1]
+                num_sen = q_token_obj_aug.shape[1] # [L]
                 random_sen = random.randint(0, num_sen-1)
                 q_token = q_token_obj_aug[:, random_sen] # [B, L]
                 q_mask = q_mask_obj_aug[:, random_sen] # [B]
+                gt_segments = gt_segments_jit # [B, 2]
+                gt_labels = gt_labels_jit 
             
         # encoder
         encoder_out, mask = self.forward_encoder(v_feat, v_mask, q_token, q_mask) 
         
         # localizer
         encoder_out_v = encoder_out[:, -v_feat.shape[1]:]
-        
-        if training and self.object_aug:
-            gt_segments = gt_segments_jit
-            gt_labels = gt_labels_jit
         
         # Localizer
         nlq_results = self.nlq_head(

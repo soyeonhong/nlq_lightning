@@ -13,4 +13,4 @@
 python run.py \
     'dataset.batch_size=32' \
     'run_type=eval' \
-    'checkpoint_path="/data/soyeonhong/nlq/nlq_lightning/outputs/batch/2024-12-10/154714/epoch=24-val_R1_03=12.873.ckpt"'
+    'checkpoint_path="/data/soyeonhong/nlq/nlq_lightning/outputs/batch/2024-12-11/155024/epoch=33-val_R1_03=0.000.ckpt"'
