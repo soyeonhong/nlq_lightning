@@ -51,8 +51,8 @@ class BaseDataset(Dataset):
 
 
 class NLQDataset(BaseDataset):
-    def __init__(self, data_dir, split, feature_type, max_v_len):
-        super().__init__(data_dir, split, feature_type, max_v_len)
+    def __init__(self, config,  data_dir, split, feature_type, max_v_len):
+        super().__init__(config, data_dir, split, feature_type, max_v_len)
 
     def __getitem__(self, index):
         video_id = self.annotations[index]['video_id']
@@ -97,7 +97,7 @@ class NLQDataset(BaseDataset):
 
 
 class QADataset(BaseDataset):
-    def __init__(self, data_dir, split, feature_type, max_v_len, qa_type, CloseQA_weight=50):
+    def __init__(self, config, data_dir, split, feature_type, max_v_len, qa_type, CloseQA_weight=50):
         super().__init__(data_dir, split, feature_type, max_v_len)
         self.qa_type = qa_type  # CloseQA, OpenQA, Mixed
         self.choice_indices = ['A', 'B', 'C', 'D']

@@ -161,23 +161,24 @@ def get_trainer(config, jid, enable_progress_bar=False, enable_checkpointing=Tru
                 monitor='Val/val_R1_03',
                 mode='max',
                 save_top_k=1,
-                filename='{epoch}-{val_R1_03:.3f}')
+                filename='{epoch}-{Val/val_R1_03:.3f}')
             ckpt_callback_r503 = ModelCheckpoint(
                 dirpath=runtime_outdir,
                 save_last=False,
                 monitor='Val/val_R5_03',
                 mode='max',
                 save_top_k=1,
-                filename='{epoch}-{val_R5_03:.3f}')
+                filename='{epoch}-{Val/val_R5_03:.3f}')
             callbacks.extend([ckpt_callback_r103, ckpt_callback_r503])
+            
+            loggers = [CSVLogger(save_dir=runtime_outdir, name="lit", version=jid)]
+            for logger_config in loggers_config:
+                logger: WandbLogger = hydra.utils.instantiate(logger_config)
+                loggers.append(logger)
     else:
         ckpt_callback_r103 = None
         ckpt_callback_r503 = None
-            
-    loggers = [CSVLogger(save_dir=runtime_outdir, name="lit", version=jid)]
-    for logger_config in loggers_config:
-        logger: WandbLogger = hydra.utils.instantiate(logger_config)
-        loggers.append(logger)
+        loggers = None
 
     trainer = pl.Trainer.from_argparse_args(
         trainer_config,
