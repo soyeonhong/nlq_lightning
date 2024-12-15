@@ -7,6 +7,7 @@
 ```bash
 # conda (recommended)
 conda create -n groundvqa python=3.9 -y && conda activate groundvqa
+pip install --upgrade "pip<24.1"
 pip install -r requirements.txt
 ```
 - Compile `nms_1d_cpu` following [here](https://github.com/happyharrycn/actionformer_release/blob/main/INSTALL.md)

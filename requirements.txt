@@ -17,3 +17,13 @@ transformers==4.35.2
 accelerate==0.24.1
 bitsandbytes
 huggingface_hub==0.24.7
+wandb>=0.12.10
+ego4d
+python-dotenv
+ipykernel
+pillow
+matplotlib
+seaborn
+opencv-python
+decord
+einops
