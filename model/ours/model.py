@@ -20,9 +20,13 @@ class GroundVQA(nn.Module):
                  object_aug = False,
                  epoch_thr = None,
                  
+                 enable_time_embedding = False,
+                 time_embedding_dim = 64,
+                 
                  debug = False,
                  freeze_word=False, 
-                 max_v_len=256):
+                 max_v_len=256,
+                 **kwargs):
         super().__init__()
         self.object_qa = object_qa
         self.nlq_from_qa = nlq_from_qa
@@ -41,6 +45,18 @@ class GroundVQA(nn.Module):
         lm_dim = self.lm.get_input_embeddings().embedding_dim
         self.lm_proj = nn.Linear(input_dim, lm_dim)
         self.v_emb = nn.Parameter(torch.randn((1, 1, lm_dim)))
+        
+        self.enable_time_embedding = enable_time_embedding
+        self.time_embedding_layer = nn.Sequential(
+                nn.Linear(2, time_embedding_dim),
+                nn.ReLU(),
+                nn.Linear(time_embedding_dim, time_embedding_dim),
+                nn.ReLU(),
+                nn.Linear(time_embedding_dim, time_embedding_dim),
+                nn.ReLU(),
+                nn.LayerNorm(time_embedding_dim)
+                )
+        
         if freeze_word:
             for name, param in self.lm.named_parameters():
                 if 'shared' in name:
@@ -72,7 +88,7 @@ class GroundVQA(nn.Module):
                     v_feat_for_obj=None,
                     v_mask_for_obj=None,
                     
-                    # object_qug
+                    # object_aug
                     q_token_obj_aug=None,
                     q_mask_obj_aug=None,
                     gt_segments_jit=None,
@@ -190,11 +206,24 @@ class GroundVQA(nn.Module):
             )
             return nlq_results, answer_tokens
 
-    def forward_encoder(self, v_feat, v_mask, q_token, q_mask):
-        B, L, D = v_feat.shape
-        v_feat = self.lm_proj(v_feat)
+    def forward_encoder(self, v_feat, v_mask, q_token, q_mask, q_time=None):
+        B, L, D = v_feat.shape # [B, 900, 2304]
+        _, Qt = q_token.shape # [B, 16]
+        RT = 1 # self.real_time_interval
+        v_feat = self.lm_proj(v_feat) # [B, 900, 768]
         v_feat = v_feat + self.v_emb.expand((B, L, -1))
-        q_feat = self.lm.encoder.embed_tokens(q_token)
+        q_feat = self.lm.encoder.embed_tokens(q_token) # [B, 16, 768]
+        if self.enable_time_embedding:
+            time_interval = torch.stack((torch.arange(0, L) * RT, torch.arange(1, L + 1) * RT), dim=1).to(device=v_feat.device, dtype=v_feat.dtype)
+            time_embedding = self.time_embedding_layer(time_interval).unsqueeze(0).expand([B, L, -1])
+            if q_time is None:
+                q_time_embedding = self.time_embedding_layer(torch.tensor([[[0, L * RT]]]).to(device=v_feat.device, dtype=v_feat.dtype)).expand([B, Qt, -1])
+            else:
+                q_time_embedding = self.time_embedding_layer(torch.tensor(q_time).to(device=v_feat.device, dtype=v_feat.dtype)).unsqueeze(1).expand([B, Qt, -1])
+                # q_feat = q_feat + q_time_embedding
+            # v_feat = torch.cat([v_feat, time_embedding], dim=-1)
+            # q_feat = torch.cat([q_feat, q_time_embedding], dim=-1)
+            v_feat = v_feat + time_embedding
         lm_input = torch.cat([q_feat, v_feat], dim=1)
         lm_mask = torch.cat([q_mask, v_mask], dim=1)
         out = self.lm.encoder(

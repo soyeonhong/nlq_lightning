@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import json
 from argparse import ArgumentParser
 from collections import defaultdict

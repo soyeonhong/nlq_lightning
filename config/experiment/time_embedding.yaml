@@ -1,0 +1,8 @@
+# @package _global_
+
+# usage: python run.py +experiment=heatmap
+
+model:
+  enable_time_embedding: true
+  time_embedding_dim: 768
+  # time_embedding_dim: 64

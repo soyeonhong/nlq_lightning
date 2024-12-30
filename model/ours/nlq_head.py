@@ -871,10 +871,10 @@ class NLQHead(nn.Module):
                 # truncate all boundaries within [0, duration]
                 segs_sec[segs_sec <= 0.0] *= 0.0
                 segs_sec[segs_sec >= vlen] = segs_sec[segs_sec >= vlen] * 0.0 + vlen
-            # else:  # FIXME: don't know why but Flan-T5-L produces segs.shape[0] == 0
-            #     segs_sec = torch.zeros((1, 2))
-            #     scores = torch.zeros(1)
-            #     labels = torch.zeros(1, dtype=torch.int64)
+            else:  # FIXME: don't know why but Flan-T5-L produces segs.shape[0] == 0
+                segs_sec = torch.zeros((1, 2))
+                scores = torch.zeros(1)
+                labels = torch.zeros(1, dtype=torch.int64)
             # 4: repack the results
             processed_results.append({
                 'segments': segs_sec,
