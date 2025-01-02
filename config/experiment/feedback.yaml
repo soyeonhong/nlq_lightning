@@ -1,0 +1,9 @@
+# @package _global_
+
+# usage: python run.py +experiment=feedback
+
+model:
+  feedback: True
+  feedback_w: 0.5
+  lm_proj_feed: False
+  feedback_type: kl

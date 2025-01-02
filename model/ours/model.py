@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers import PreTrainedModel, AutoModelForSeq2SeqLM
 from transformers.modeling_outputs import BaseModelOutput
 
@@ -7,8 +8,21 @@ from model.ours.nlq_head import NLQHead
 
 
 class GroundVQA(nn.Module):
-    def __init__(self, lm_path, input_dim, freeze_word=False, max_v_len=256):
+    def __init__(self, lm_path, 
+                       input_dim, 
+                       
+                       feedback=False,
+                       feedback_w=0.5,
+                       lm_proj_feed=False,
+                       feedback_type='kl',
+
+                       freeze_word=False, 
+                       max_v_len=256):
         super().__init__()
+        self.feedback = feedback
+        self.feedback_w = feedback_w
+        self.lm_proj_feed = lm_proj_feed
+        self.feedback_type = feedback_type
 
         if not isinstance(input_dim, int):
             input_dim = input_dim.v_dim
@@ -28,7 +42,7 @@ class GroundVQA(nn.Module):
     def forward(self, v_feat, v_mask, q_token, q_mask, gt_segments=None, gt_labels=None, 
             labels=None, v_len=None, compute_loss=False, training=True, **remains):
         # Encoder
-        encoder_out, mask = self.forward_encoder(v_feat, v_mask, q_token, q_mask)
+        encoder_out, mask, sim_v_feat, hidden_states = self.forward_encoder(v_feat, v_mask, q_token, q_mask)
         encoder_out_v = encoder_out[:, -v_feat.shape[1]:]
         
         # Localizer
@@ -56,7 +70,33 @@ class GroundVQA(nn.Module):
                 'lm_loss': lm_loss.detach()
             }
             
-            total_loss = 0.5 * time_loss + 0.5 * lm_loss
+            if self.feedback:
+                feedback_loss = 0
+                p = F.log_softmax(sim_v_feat, dim=-1) # desired distribution
+                if self.lm_proj_feed:
+                    sim_ori_v_feat = cosine_similarity(v_feat)
+                    q = F.softmax(sim_ori_v_feat, dim=-1) # predicted distribution
+                    # KL divergence
+                    if self.feedback_type == 'kl':
+                        feedback_loss = F.kl_div(p, q, reduction='batchmean')
+                    # RMSE
+                    elif self.feedback_type == 'rmse':
+                        feedback_loss += F.mse_loss(sim_ori_v_feat, sim_v_feat)
+                else:
+                    for i in range(len(hidden_states)):
+                        hidden = hidden_states[i][:, -v_feat.shape[1]:] # (B, T, D)
+                        
+                        # cosine similarity
+                        sim_hidden = cosine_similarity(hidden)
+                        
+                        # KL divergence
+                        q = F.softmax(sim_hidden, dim=-1) # predicted distribution
+                        feedback_loss += F.kl_div(p, q, reduction='batchmean')
+                
+                log_dict.update({'feedback_loss': feedback_loss.detach()})
+                total_loss = 0.5 * time_loss + 0.25 * lm_loss + self.feedback_w * feedback_loss
+            else:          
+                total_loss = 0.5 * time_loss + 0.5 * lm_loss
             
             log_dict.update({'total_loss': total_loss.detach()})
             output_dict.update({'loss': total_loss})
@@ -75,12 +115,45 @@ class GroundVQA(nn.Module):
     def forward_encoder(self, v_feat, v_mask, q_token, q_mask):
         B, L, D = v_feat.shape
         v_feat = self.lm_proj(v_feat)
+        
+        if self.feedback:
+            sim_v_feat = cosine_similarity(v_feat)
+            
         v_feat = v_feat + self.v_emb.expand((B, L, -1))
         q_feat = self.lm.encoder.embed_tokens(q_token)
         lm_input = torch.cat([q_feat, v_feat], dim=1)
         lm_mask = torch.cat([q_mask, v_mask], dim=1)
         out = self.lm.encoder(
             inputs_embeds=lm_input,
-            attention_mask=lm_mask
-        )
-        return out.last_hidden_state, lm_mask
+            attention_mask=lm_mask,
+            output_hidden_states=True if self.feedback else None)
+
+        if self.feedback:
+            # exclude the first hidden state(=not a transformer output)
+            return out.last_hidden_state, lm_mask, sim_v_feat, out.hidden_states[1: ] 
+        else:
+            return out.last_hidden_state, lm_mask, None, None
+        
+def cosine_similarity(v_feat):
+    """
+    Computes the pairwise cosine similarity between vectors in the input tensor.
+
+    Args:
+        v_feat (torch.Tensor): Input tensor of shape (B, T, D), where:
+                               - B is the batch size
+                               - T is the sequence length
+                               - D is the feature dimension
+
+    Returns:
+        torch.Tensor: Pairwise cosine similarity matrix of shape (B, T, T).
+    """
+    # Compute the inner product
+    sim_v_feat = torch.bmm(v_feat, v_feat.transpose(1, 2))  # Shape: (B, T, T)
+
+    # Compute the norm of each vector
+    norm = torch.norm(v_feat, dim=-1, keepdim=True)  # Shape: (B, T, 1)
+
+    # Normalize the inner product using the norms
+    sim_v_feat = sim_v_feat / (norm @ norm.transpose(1, 2) + 1e-8)  # Shape: (B, T, T)
+
+    return sim_v_feat

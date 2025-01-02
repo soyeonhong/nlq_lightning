@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name gvqa_reproduce_nlq_lit
+#SBATCH --job-name feedback_loss_lm_proj_rmse
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-gpu=8
 #SBATCH --mem-per-gpu=29G
@@ -14,5 +14,9 @@ set -e  # exit on error
 
 hostname
 
-python run.py
+python run.py \
+    "+experiment=feedback" \
+    "model.lm_proj_feed=True" \
+    "model.feedback_type=rmse"
+
 
