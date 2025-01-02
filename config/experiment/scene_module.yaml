@@ -1,0 +1,6 @@
+# @package _global_
+
+# usage: python run.py +experiment=scene_module
+
+model:
+  scene_module: True
