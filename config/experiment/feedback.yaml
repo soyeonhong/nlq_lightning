@@ -6,4 +6,6 @@ model:
   feedback: True
   feedback_w: 0.5
   lm_proj_feed: False
+  lm_enc_feed: False
+  feed_last: True
   feedback_type: kl

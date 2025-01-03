@@ -14,6 +14,8 @@ class GroundVQA(nn.Module):
                        feedback=False,
                        feedback_w=0.5,
                        lm_proj_feed=False,
+                       lm_enc_feed=False,
+                       feed_last=False,
                        feedback_type='kl',
 
                        freeze_word=False, 
@@ -22,7 +24,9 @@ class GroundVQA(nn.Module):
         self.feedback = feedback
         self.feedback_w = feedback_w
         self.lm_proj_feed = lm_proj_feed
+        self.lm_enc_feed = lm_enc_feed
         self.feedback_type = feedback_type
+        self.feed_last = feed_last
 
         if not isinstance(input_dim, int):
             input_dim = input_dim.v_dim
@@ -71,27 +75,23 @@ class GroundVQA(nn.Module):
             }
             
             if self.feedback:
-                feedback_loss = 0
-                p = F.log_softmax(sim_v_feat, dim=-1) # desired distribution
+                feedback_loss1 = feedback_loss2 = 0
+                sim_ori_v_feat = cosine_similarity(v_feat)
                 if self.lm_proj_feed:
-                    sim_ori_v_feat = cosine_similarity(v_feat)
-                    q = F.softmax(sim_ori_v_feat, dim=-1) # predicted distribution
-                    # KL divergence
-                    if self.feedback_type == 'kl':
-                        feedback_loss = F.kl_div(p, q, reduction='batchmean')
-                    # RMSE
-                    elif self.feedback_type == 'rmse':
-                        feedback_loss += F.mse_loss(sim_ori_v_feat, sim_v_feat)
-                else:
-                    for i in range(len(hidden_states)):
-                        hidden = hidden_states[i][:, -v_feat.shape[1]:] # (B, T, D)
-                        
-                        # cosine similarity
-                        sim_hidden = cosine_similarity(hidden)
-                        
-                        # KL divergence
-                        q = F.softmax(sim_hidden, dim=-1) # predicted distribution
-                        feedback_loss += F.kl_div(p, q, reduction='batchmean')
+                    feedback_loss1 = self.compute_feedback_loss(sim_ori_v_feat, sim_v_feat)
+                if self.lm_enc_feed:
+                    if self.feed_last:
+                        hidden_states = hidden_states[-1]
+                        hidden = hidden_states[:, -v_feat.shape[1]:] # (B, T, D)
+                        sim_hidden = cosine_similarity(hidden) # (B, T, T)
+                        feedback_loss2 = self.compute_feedback_loss(sim_ori_v_feat, sim_hidden)
+                    else:
+                        for i in range(len(hidden_states)):
+                            hidden = hidden_states[i][:, -v_feat.shape[1]:] # (B, T, D)
+                            sim_hidden = cosine_similarity(hidden) # (B, T, T)     
+                            feedback_loss2 += self.compute_feedback_loss(sim_ori_v_feat, sim_hidden)
+    
+                feedback_loss = feedback_loss1 + feedback_loss2
                 
                 log_dict.update({'feedback_loss': feedback_loss.detach()})
                 total_loss = 0.5 * time_loss + 0.25 * lm_loss + self.feedback_w * feedback_loss
@@ -134,19 +134,17 @@ class GroundVQA(nn.Module):
         else:
             return out.last_hidden_state, lm_mask, None, None
         
+    def compute_feedback_loss(self, target, prediction):
+        if self.feedback_type == 'kl':
+            # KL divergence
+            return F.kl_div(F.log_softmax(prediction, dim=-1), F.softmax(target, dim=-1), reduction='batchmean')
+        elif self.feedback_type == 'rmse':
+            # RMSE
+            return F.mse_loss(target, prediction)
+        else:
+            raise ValueError(f"Unsupported feedback type: {self.feedback_type}")
+
 def cosine_similarity(v_feat):
-    """
-    Computes the pairwise cosine similarity between vectors in the input tensor.
-
-    Args:
-        v_feat (torch.Tensor): Input tensor of shape (B, T, D), where:
-                               - B is the batch size
-                               - T is the sequence length
-                               - D is the feature dimension
-
-    Returns:
-        torch.Tensor: Pairwise cosine similarity matrix of shape (B, T, T).
-    """
     # Compute the inner product
     sim_v_feat = torch.bmm(v_feat, v_feat.transpose(1, 2))  # Shape: (B, T, T)
 
