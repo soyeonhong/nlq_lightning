@@ -45,6 +45,7 @@ class BaseDataset(Dataset):
         self.jitter = config.get('jitter', None)
         self.search_all = config.get('search_all', None)
         self.nlq_from_qa = config.get('nlq_from_qa', None)
+        self.temporal_object_qa = config.get('temporal_object_qa', None)
         
         if (self.object_qa or self.object_aug) and 'train' in self.split:
             self.annotations = json.loads(Path(os.path.join(data_dir, f'annotations.{split}_object.json')).read_text())
@@ -147,6 +148,8 @@ class NLQDataset(BaseDataset):
                         obj_q_pos = f"Is there a {query_objs[0]}?"
                 else:
                     obj_q_pos = f"Are there {', '.join(query_objs[:-1])} and {query_objs[-1]}?"
+                if self.temporal_object_qa:
+                    obj_q_pos = "In _ , " + obj_q_pos
                 q_str_pos = f"question: {obj_q_pos} video: "
                 
                 # negative question
@@ -197,6 +200,8 @@ class NLQDataset(BaseDataset):
                     q_str_neg = q_str_pos
                 else:      
                     obj_q_neg = f"Is there a {random.choice(obj_list)}?"
+                    if self.temporal_object_qa:
+                        obj_q_neg = "In _ , " + obj_q_neg
                     q_str_neg = f"question: {obj_q_neg} video: "
                 
                 sample['question_obj_pos'] = q_str_pos

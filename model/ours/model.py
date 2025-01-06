@@ -20,8 +20,11 @@ class GroundVQA(nn.Module):
                  object_aug = False,
                  epoch_thr = None,
                  
+                 temporal_object_qa = False,
+                 qa_positive_rate : float = 0.7,
                  enable_time_embedding = False,
                  time_embedding_dim = 64,
+                 time_embedding_type : str = 'add',
                  
                  debug = False,
                  freeze_word=False, 
@@ -35,6 +38,8 @@ class GroundVQA(nn.Module):
         self.epoch_thr = epoch_thr
         
         self.object_aug = object_aug
+        self.temporal_object_qa = temporal_object_qa
+        self.qa_positive_rate = qa_positive_rate
         self.debug = debug
 
         if not isinstance(input_dim, int):
@@ -47,6 +52,7 @@ class GroundVQA(nn.Module):
         self.v_emb = nn.Parameter(torch.randn((1, 1, lm_dim)))
         
         self.enable_time_embedding = enable_time_embedding
+        self.time_embedding_type = time_embedding_type
         self.time_embedding_layer = nn.Sequential(
                 nn.Linear(2, time_embedding_dim),
                 nn.ReLU(),
@@ -128,13 +134,19 @@ class GroundVQA(nn.Module):
             # Compute losses
             time_loss = nlq_results['final_loss'] * 1.0
             
-            if self.object_qa:
+            # temporal_object_qa
+            if self.object_qa or self.temporal_object_qa:
                 if v_feat_for_obj is not None:
                     v_feat = v_feat_for_obj
                     v_mask = v_mask_for_obj
                 
+                if self.temporal_object_qa:
+                    q_time = gt_segments
+                else:
+                    q_time = None
+                    
                 # pos, neg selection
-                if random.randint(0, 1) == 1 or self.debug: # positive
+                if random.random() < self.qa_positive_rate or self.debug: # positive
                     q_token = q_token_obj_pos
                     q_mask = q_mask_obj_pos
                     labels = labels_obj_pos
@@ -144,7 +156,7 @@ class GroundVQA(nn.Module):
                     labels = labels_obj_neg
 
                 # encoder
-                encoder_out, mask = self.forward_encoder(v_feat, v_mask, q_token, q_mask) 
+                encoder_out, mask = self.forward_encoder(v_feat, v_mask, q_token, q_mask, q_time) 
                 
             outputs = self.lm(
                 encoder_outputs=(encoder_out,),
@@ -217,9 +229,11 @@ class GroundVQA(nn.Module):
             time_interval = torch.stack((torch.arange(0, L) * RT, torch.arange(1, L + 1) * RT), dim=1).to(device=v_feat.device, dtype=v_feat.dtype)
             time_embedding = self.time_embedding_layer(time_interval).unsqueeze(0).expand([B, L, -1])
             if q_time is None:
-                q_time_embedding = self.time_embedding_layer(torch.tensor([[[0, L * RT]]]).to(device=v_feat.device, dtype=v_feat.dtype)).expand([B, Qt, -1])
+                # q_time_embedding = self.time_embedding_layer(torch.tensor([[[0, L * RT]]]).to(device=v_feat.device, dtype=v_feat.dtype)).expand([B, Qt, -1])
+                pass
             else:
-                q_time_embedding = self.time_embedding_layer(torch.tensor(q_time).to(device=v_feat.device, dtype=v_feat.dtype)).unsqueeze(1).expand([B, Qt, -1])
+                q_time_embedding = self.time_embedding_layer(q_time).squeeze(1)
+                q_feat[:,4,:] = q_time_embedding
                 # q_feat = q_feat + q_time_embedding
             # v_feat = torch.cat([v_feat, time_embedding], dim=-1)
             # q_feat = torch.cat([q_feat, q_time_embedding], dim=-1)

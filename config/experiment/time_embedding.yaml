@@ -6,3 +6,4 @@ model:
   enable_time_embedding: true
   time_embedding_dim: 768
   # time_embedding_dim: 64
+  # time_embedding_type: 'concat'

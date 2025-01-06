@@ -4,16 +4,18 @@
 
 dataset:
   object_qa: True
-  env_dir: '/data/soyeonhong/nlq/nlq_lightning/universal-ner/LLaVA-NeXT-Video-7B-DPO-uniner-extracted/version-1'
+  env_dir: '/data/joohyun7u/project/NLQ/nlq_lightning/data/object/version-1'
   env_interval: 2
   slice_interval: 10
   search_interval: 30
   search_all: True
   nlq_from_qa: True
+  temporal_object_qa: True
 
 model:
-  object_qa: ${dataset.object_qa}
-  nlq_from_qa: ${dataset.nlq_from_qa}
+  object_qa: False
+  nlq_from_qa: False
+  temporal_object_qa: ${dataset.temporal_object_qa}
   qa_positive_rate: 0.5
   lm_weight: 0.2
   time_weight: 0.5
