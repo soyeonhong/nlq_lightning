@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name feedback_loss_both
+#SBATCH --job-name feedback_mask
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-gpu=8
 #SBATCH --mem-per-gpu=29G
@@ -16,9 +16,6 @@ hostname
 
 python run.py \
     "+experiment=feedback" \
-    "model.lm_enc_feed=True" \
-    "model.lm_proj_feed=True" \
-    "model.feed_last=True" \
-    "model.feedback_type=rmse"
+    "model.feedback_mask=True"
 
 

@@ -9,3 +9,4 @@ model:
   lm_enc_feed: False
   feed_last: True
   feedback_type: kl
+  feedback_mask: False

@@ -17,6 +17,7 @@ class GroundVQA(nn.Module):
                        lm_enc_feed=False,
                        feed_last=False,
                        feedback_type='kl',
+                       feedback_mask=False,
 
                        freeze_word=False, 
                        max_v_len=256):
@@ -27,6 +28,7 @@ class GroundVQA(nn.Module):
         self.lm_enc_feed = lm_enc_feed
         self.feedback_type = feedback_type
         self.feed_last = feed_last
+        self.feedback_mask = feedback_mask
 
         if not isinstance(input_dim, int):
             input_dim = input_dim.v_dim
@@ -74,7 +76,7 @@ class GroundVQA(nn.Module):
                 'lm_loss': lm_loss.detach()
             }
             
-            if self.feedback:
+            if self.feedback and not self.feedback_mask:
                 feedback_loss1 = feedback_loss2 = 0
                 sim_ori_v_feat = cosine_similarity(v_feat)
                 if self.lm_proj_feed:
@@ -121,6 +123,13 @@ class GroundVQA(nn.Module):
             
         v_feat = v_feat + self.v_emb.expand((B, L, -1))
         q_feat = self.lm.encoder.embed_tokens(q_token)
+        
+        if self.feedback_mask:
+            attn = torch.bmm(v_feat, q_feat.transpose(1, 2)) # (B, T_v, T_q)
+            attn = attn.mean(dim=-1) # (B, T_v)
+            attn = F.softmax(attn, dim=-1) # (B, T_v)
+            v_mask = attn
+            
         lm_input = torch.cat([q_feat, v_feat], dim=1)
         lm_mask = torch.cat([q_mask, v_mask], dim=1)
         out = self.lm.encoder(
