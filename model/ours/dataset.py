@@ -33,6 +33,12 @@ class BaseDataset(Dataset):
         self.video_features = h5py.File(os.path.join(data_dir, feature_type + '.hdf5'), 'r')
         self.annotations = json.loads(Path(os.path.join(data_dir, f'annotations.{split}.json')).read_text())
         self.max_v_len = max_v_len
+        self.scene_module = config.get('scene_module', False)
+        
+        if self.scene_module:
+            self.p_scene = Path(config.get('scene_module_path', None))
+            self.max_scene = config.get('max_scene', None)
+            self.in_scene = config.get('in_scene', None)
         print(f'{split} set: {len(self.annotations)}')
     
     def __len__(self):
@@ -81,8 +87,8 @@ class NLQDataset(BaseDataset):
         segments = torch.tensor([[start_time, end_time]]) * 30 / 16.043 * sample_ratio
         labels = torch.zeros(len(segments), dtype=torch.int64)
         one_hot_labels = F.one_hot(labels, 1)  # (1, 1)
-
-        return {
+            
+        sample = {
             'video_id': video_id,
             'question': f"question: {question} video: ",
             'answer': 'None',
@@ -94,7 +100,42 @@ class NLQDataset(BaseDataset):
             'sample_ratio': sample_ratio,
             'task': 'NLQ'
         }
+        
+        if self.scene_module:
+            scene_idx = torch.load(self.p_scene / f'{video_id}.pt') # (n, 2)
+            num_scene = scene_idx.shape[0]
+            
+            scene_list = []
+            
+            if num_scene > self.max_scene:
+                seg_len = v_len // self.max_scene
+                for i in range(self.max_scene):
+                    start, end = i*seg_len, (i+1)*seg_len
+                    scene = video_feature[start:end]
+                    if self.in_scene == 'mean':
+                        scene_list.append(scene.mean(dim=0))
+                scene_mask = torch.ones(self.max_scene)
+            else:
+                for start, end in scene_idx:
+                    start, end = int(start.item()), int(end.item())
+                    scene = video_feature[start:end]
+                    if self.in_scene == 'mean':
+                        scene_list.append(scene.mean(dim=0))
 
+                padding_count = self.max_scene - num_scene
+                padding_tensors = torch.zeros(padding_count, video_feature.shape[1])
+                scene_list.extend(padding_tensors)
+                
+                scene_mask = torch.ones(num_scene)
+                scene_mask_pad = torch.zeros(padding_count)
+                scene_mask = torch.cat([scene_mask, scene_mask_pad])
+            
+            scene = torch.stack(scene_list)
+            scene_mask = scene_mask.bool()
+            sample.update({'scene': scene, 
+                           'scene_mask': scene_mask})
+
+        return sample
 
 class QADataset(BaseDataset):
     def __init__(self, config, data_dir, split, feature_type, max_v_len, qa_type, CloseQA_weight=50):
@@ -169,6 +210,7 @@ class JointDataset(ConcatDataset):
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, 
                                                        local_files_only=True)
         self.tokenizer.pad_token = self.tokenizer.eos_token  # BUG: Set this per convenience for GPT-2
+        self.scene_module = datasets[0].scene_module
 
     def collate_fn(self, batch):
         question = [b['question'] for b in batch]
@@ -201,6 +243,12 @@ class JointDataset(ConcatDataset):
             'labels': labels,
             'task': [b['task'] for b in batch]
         }
+        
+        if self.scene_module:
+            scene = torch.stack([b['scene'] for b in batch]) # (b, n, d)
+            scene_mask = torch.stack([b['scene_mask'] for b in batch]) # (b, n)
+            result.update({'scene': scene, 
+                           'scene_mask': scene_mask})
 
         return result
 

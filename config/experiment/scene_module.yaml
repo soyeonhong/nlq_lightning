@@ -4,6 +4,10 @@
 
 model:
   scene_module: True
-  mask_size: 441
   scene_arch: 'encoder'
-  max_num_scene: 1000000000
+
+dataset:
+  scene_module: True
+  scene_module_path: '/data/soyeonhong/nlq/nlq_lightning/data/scene'
+  max_scene: 15
+  in_scene: 'mean'
