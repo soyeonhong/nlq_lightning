@@ -125,7 +125,7 @@ class GroundVQA(nn.Module):
         q_feat = self.lm.encoder.embed_tokens(q_token)
         
         if self.feedback_mask:
-            attn = torch.bmm(v_feat, q_feat.transpose(1, 2)) # (B, T_v, T_q)
+            attn = torch.bmm(v_feat, q_feat.transpose(1, 2)) / D ** 0.5 # (B, T_v, T_q)
             attn = attn.mean(dim=-1) # (B, T_v)
             attn = F.softmax(attn, dim=-1) # (B, T_v)
             v_mask = attn
