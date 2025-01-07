@@ -4,3 +4,6 @@
 
 model:
   scene_module: True
+  mask_size: 441
+  scene_arch: 'encoder'
+  max_num_scene: 1000000000

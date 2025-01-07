@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name feedback_loss_lm_proj_rmse
+#SBATCH --job-name scene_module_decoder
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-gpu=8
 #SBATCH --mem-per-gpu=29G
@@ -15,8 +15,8 @@ set -e  # exit on error
 hostname
 
 python run.py \
-    "+experiment=feedback" \
-    "model.lm_proj_feed=True" \
-    "model.feedback_type=rmse"
+    "+experiment=scene_module" \
+    "model.scene_arch=decoder" \
+    "dataset.batch_size=5"
 
 
