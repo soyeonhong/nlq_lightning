@@ -186,3 +186,8 @@ config/base_jh.yaml
 config/debug/base_jh.yaml
 scripts/ttrain.sbatch
 scripts/eeval.sbatch
+notebooks/tmp.ipynb
+data.zip
+llava_video.zip
+visualize_tool.ipynb
+notebooks/visual_heatmap.ipynb

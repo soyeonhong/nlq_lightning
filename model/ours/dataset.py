@@ -361,7 +361,7 @@ class JointDataset(ConcatDataset):
         return result
     
 class QADataset(BaseDataset):
-    def __init__(self, data_dir, split, feature_type, max_v_len, qa_type, CloseQA_weight=50):
+    def __init__(self, config, data_dir, split, feature_type, max_v_len, qa_type, CloseQA_weight=50):
         super().__init__(data_dir, split, feature_type, max_v_len)
         self.qa_type = qa_type  # CloseQA, OpenQA, Mixed
         self.choice_indices = ['A', 'B', 'C', 'D']
