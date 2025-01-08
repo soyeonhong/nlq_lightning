@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name scene_module_decoder
+#SBATCH --job-name scene_module_concat
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-gpu=8
 #SBATCH --mem-per-gpu=29G
@@ -16,7 +16,6 @@ hostname
 
 python run.py \
     "+experiment=scene_module" \
-    "model.scene_arch=decoder" \
-    "dataset.batch_size=5"
+    "model.scene_arch=concat"
 
 

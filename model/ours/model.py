@@ -65,9 +65,11 @@ class GroundVQA(nn.Module):
             config.num_layers = 3
             config.is_decoder = True
             self.scene = T5Stack(config, self.lm.shared)
+        else:
+            self.scene = None
             
         if self.scene_module:      
-            if freeze_word:
+            if freeze_word and self.scene is not None:
                _freeze_shared_parameters(self.scene)
                
     def forward(self, 
@@ -90,8 +92,14 @@ class GroundVQA(nn.Module):
             
         # Encoder
         encoder_out, mask, sim_v_feat, hidden_states = self.forward_encoder(v_feat, v_mask, q_token, q_mask, scene, scene_mask)
-
-        encoder_out_v = encoder_out[:, -v_feat.shape[1]:]
+        
+        if self.scene_arch == 'concat':
+            num_q = q_token.shape[1]
+            num_v = v_feat.shape[1]
+            
+            encoder_out_v = encoder_out[:, num_q:num_q + num_v:]
+        else:
+            encoder_out_v = encoder_out[:, -v_feat.shape[1]:]
         
         # Localizer
         nlq_results = self.nlq_head(
@@ -190,11 +198,15 @@ class GroundVQA(nn.Module):
                 torch.cuda.empty_cache()
             
         q_feat = self.lm.encoder.embed_tokens(q_token)
-
         v_feat = v_feat + self.v_emb.expand((B, L, -1)) # (B, T, D)
         q_feat = self.lm.encoder.embed_tokens(q_token)
-        lm_input = torch.cat([q_feat, v_feat], dim=1)
-        lm_mask = torch.cat([q_mask, v_mask], dim=1)
+        
+        if self.scene_arch == 'concat':
+            lm_input = torch.cat([q_feat, v_feat, scene], dim=1) # (B, T_v + T_q + N, D)
+            lm_mask = torch.cat([q_mask, v_mask, scene_mask], dim=1) # (B, T_v + T_q + N)
+        else:
+            lm_input = torch.cat([q_feat, v_feat], dim=1)
+            lm_mask = torch.cat([q_mask, v_mask], dim=1)
         out = self.lm.encoder(
             inputs_embeds=lm_input,
             attention_mask=lm_mask,
