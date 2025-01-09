@@ -139,7 +139,7 @@ def _adjust_ddp_config(trainer_cfg):
     return trainer_cfg
 
 def get_trainer(config, jid, enable_progress_bar=False, enable_checkpointing=True, ddp_timeout=30):
-    runtime_outdir: str = config.runtime_outdir
+    runtime_outdir: str = f'{hydra.utils.get_original_cwd()}/outputs/{config.job_type}/{config.YY}-{config.mm}-{config.dd}/{config.jid}'
     trainer_config = Namespace(**_adjust_ddp_config(config.trainer))
     loggers_config = config.trainer.logger
 
