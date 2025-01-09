@@ -162,7 +162,7 @@ def get_trainer(config, jid, enable_progress_bar=False, enable_checkpointing=Tru
                 auto_insert_metric_name=False,
                 mode='max',
                 save_top_k=1,
-                filename='epoch={epoch}-{Val/val_R1_03:.3f}')
+                filename='epoch={epoch}-val_R1_03={Val/val_R1_03:.3f}')
             ckpt_callback_r503 = ModelCheckpoint(
                 dirpath=runtime_outdir,
                 save_last=False,
@@ -170,7 +170,7 @@ def get_trainer(config, jid, enable_progress_bar=False, enable_checkpointing=Tru
                 auto_insert_metric_name=False,
                 mode='max',
                 save_top_k=1,
-                filename='epoch={epoch}-{Val/val_R5_03:.3f}')
+                filename='epoch={epoch}-val_R5_03={Val/val_R5_03:.3f}')
             callbacks.extend([ckpt_callback_r103, ckpt_callback_r503])
             
             loggers = [CSVLogger(save_dir=runtime_outdir, name="lit", version=jid)]
