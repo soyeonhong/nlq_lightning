@@ -13,6 +13,7 @@ import numpy as np
 import torch
 import terminaltables
 from pathlib import Path
+import os
 
 def load_jsonl(filename):
     with open(filename, "r") as f:
@@ -30,8 +31,9 @@ class ReferringRecall(object):
         self.dataset = dataset
         self.ann_dir = Path(ann_dir)
         if self.dataset == "ego4d":
-            self.gt_val_dict, self.num_gt_val_queries = self.load_gt_from_json(json.loads((self.ann_dir /'nlq_val.json').read_text()))
-            self.gt_train_dict, self.num_gt_train_queries = self.load_gt_from_json(json.loads((self.ann_dir /'nlq_train.json').read_text()))
+            p_ann = Path(os.getcwd()).parents[3]
+            self.gt_val_dict, self.num_gt_val_queries = self.load_gt_from_json(json.loads((p_ann / 'data/nlq_v2/nlq_val.json').read_text()))
+            self.gt_train_dict, self.num_gt_train_queries = self.load_gt_from_json(json.loads((p_ann / 'data/nlq_v2/nlq_train.json').read_text()))
         else:
             self.gt_dict = {}
             for d in load_jsonl(self.gt_file):
