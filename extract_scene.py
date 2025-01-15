@@ -10,11 +10,29 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
 
+def interp_t(tensor, T_target, mode='nearest'):
+    # tensor: [T_source, D]
+    D, dtype = tensor.shape[-1], tensor.dtype
+    return F.interpolate(tensor[None, None].float(), size=(T_target, D), mode=mode).squeeze([0, 1]).to(dtype=dtype)
 
 class NLQDataset(torch.utils.data.Dataset):
-    def __init__(self, split):
-        self.annotations = json.loads(Path(f"/data/soyeonhong/nlq/nlq_lightning/data/unified/annotations.NLQ_{split}.json").read_text())
+    def __init__(self, feature_type, caption_type='videorecap'):
+        self.train_annotations = json.loads(Path(f"/data/soyeonhong/nlq/nlq_lightning/data/unified/annotations.NLQ_train.json").read_text())
+        self.val_annotations = json.loads(Path(f"/data/soyeonhong/nlq/nlq_lightning/data/unified/annotations.NLQ_val.json").read_text())
+        self.annotations = self.train_annotations + self.val_annotations
+        self.feature_type = feature_type
+        self.caption_type = caption_type
         self.video_features = h5py.File(os.path.join('/data/soyeonhong/nlq/nlq_lightning/data/unified/egovlp_internvideo.hdf5'), 'r')
+
+        if self.feature_type == 'clip':
+            # self.p_feature = Path('/data/soyeonhong/nlq/ego4d/CLIP/clip_ego4d_feature')
+            self.p_feature = Path(f'/data/soyeonhong/nlq/ego4d/CLIP/__clip_ego4d_feature')
+            valid_ids = [p.stem for p in self.p_feature.glob('*.pth')]
+            self.annotations = [a for a in self.annotations if a['video_id'] in valid_ids]
+        elif self.feature_type == 'egovlp':
+            self.p_feature = Path(f'/data/soyeonhong/nlq/nlq_lightning/data/egovlp/{self.caption_type}')
+            valid_ids = [p.stem for p in self.p_feature.glob('*.pt')]
+            self.annotations = [a for a in self.annotations if a['video_id'] in valid_ids]
         self.max_v_len = 1200
 
     def __len__(self):
@@ -35,6 +53,12 @@ class NLQDataset(torch.utils.data.Dataset):
         video_id = self.annotations[index]['video_id']
         
         video_feature, v_len, sample_ratio = self._get_video_feature(video_id)
+        
+        if self.feature_type == 'clip' or self.feature_type == 'egovlp':
+            clip_feature = torch.load(self.p_feature / f"{video_id}.pth")
+            
+            if not clip_feature.shape[0] == v_len:
+                video_feature = interp_t(clip_feature, v_len)
         
         v_mask = torch.ones(v_len)
         
@@ -88,7 +112,7 @@ def generate_scene(src_vid, src_vid_mask, mask):
     mask_size = mask.size(0)
     mask = mask.view(1,mask_size,mask_size)
     pad_tsm = nn.ZeroPad2d(mask_size//2)(tsm)
-    score = torch.diagonal(F.conv2d(pad_tsm.unsqueeze(1), mask.unsqueeze(1)).squeeze(1), dim1=1,dim2=2)  # [bsz,L_src]
+    score = torch.diagonal(F.conv2d(pad_tsm.unsqueeze(1).float(), mask.unsqueeze(1)).squeeze(1), dim1=1,dim2=2)  # [bsz,L_src]
     # average score as threshold
     tau = score.mean(1).unsqueeze(1).repeat(1,L_src)
     # fill the start, end indices with the max score
@@ -128,12 +152,19 @@ def main():
     parser.add_argument('--mask_size', type=int, default=441)
     parser.add_argument('--split', type=str, default='train')
     parser.add_argument('--dir', type=str, default='/data/soyeonhong/nlq/nlq_lightning/data/scene')
+    parser.add_argument('--feature_type', type=str, default='egovlp_internvideo')
+    parser.add_argument('--caption_type', type=str, default='videorecap')
     args = parser.parse_args()
 
-    ds = NLQDataset(split=args.split)
+    ds = NLQDataset(feature_type=args.feature_type, caption_type=args.caption_type)
 
     p_out_root_dir = Path(args.dir)
-    p_out_dir = p_out_root_dir / args.split
+    if args.feature_type == 'clip':
+        p_out_dir = p_out_root_dir / args.feature_type
+    elif args.feature_type == 'egovlp_internvideo':
+        p_out_dir = p_out_root_dir / args.feature_type / f'mask_{args.mask_size}'
+    else:
+        p_out_dir = p_out_root_dir / args.feature_type / args.caption_type
     p_out_dir.mkdir(parents=True, exist_ok=True)
 
     cmd = "scontrol show jobid ${SLURM_JOB_ID} | grep -oP '(?<=BatchFlag=)([0-1])'"
@@ -142,7 +173,7 @@ def main():
     if not disable:
         print("BatchFlag is 0. tqdm is enabled.")
 
-    mask = generate_mask(args.mask_size)
+    mask = generate_mask(args.mask_size).cuda()
     for annotation in tqdm(ds, disable=disable):
         
         video_id = annotation['video_id']
@@ -150,7 +181,6 @@ def main():
         
         if out_file.exists():
             continue
-        
         video_feature = annotation['v_feat'].cuda()
         video_mask = annotation['v_mask'].cuda()
         scene = generate_scene(video_feature.unsqueeze(0), video_mask.unsqueeze(0), mask)
